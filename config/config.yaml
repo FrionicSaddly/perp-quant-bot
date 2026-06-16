@@ -1,0 +1,78 @@
+# ============================================================================
+# perp-quant-bot configuration
+# All knobs live here. Code reads this file via perp_quant_bot.config.load_config
+# ============================================================================
+
+exchange:
+  id: bybit            # ccxt exchange id
+  testnet: true        # use sandbox / testnet endpoints (play money)
+  market_type: linear  # linear = USDT-margined perpetuals
+  quote: USDT
+
+universe:
+  # ccxt unified symbols for Bybit USDT perps use the ":USDT" settle suffix
+  symbols:
+    - "BTC/USDT:USDT"
+    - "ETH/USDT:USDT"
+  timeframe: "1h"               # bar size for modeling
+  since: "2022-01-01T00:00:00Z" # history start for downloads
+
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+
+features:
+  # rolling windows in BARS (with 1h bars: 6h,12h,1d,2d,3d,1w)
+  windows: [6, 12, 24, 48, 72, 168]
+  rsi_period: 14
+  atr_period: 14
+  bb_period: 20
+  include_funding: true
+  include_open_interest: true
+
+labeling:
+  method: triple_barrier   # triple_barrier | fixed_horizon
+  horizon_bars: 24         # vertical barrier (max holding) in bars
+  pt_atr_mult: 1.5         # upper barrier = pt_atr_mult * ATR (symmetric by default)
+  sl_atr_mult: 1.5         # lower barrier = sl_atr_mult * ATR
+  min_ret: 0.0             # |return| below this at vertical barrier => neutral (0)
+
+model:
+  type: lightgbm
+  prob_threshold: 0.40     # min class prob (above neutral) required to take a trade
+  params:
+    # objective/num_class are inferred automatically from the labels
+    n_estimators: 600
+    learning_rate: 0.03
+    num_leaves: 63
+    max_depth: -1
+    subsample: 0.8
+    subsample_freq: 1
+    colsample_bytree: 0.8
+    reg_lambda: 1.0
+    min_child_samples: 50
+    n_jobs: -1
+    verbosity: -1
+
+validation:
+  scheme: purged_walk_forward
+  n_splits: 5
+  embargo_bars: 24         # gap between train and test to kill leakage
+
+backtest:
+  fee_rate: 0.00055        # taker fee (~0.055% Bybit perps)
+  slippage_bps: 2.0        # extra cost per side, in basis points
+  apply_funding: true
+  initial_capital: 10000.0
+
+risk:
+  risk_per_trade: 0.01     # fraction of equity risked per trade (to the stop)
+  atr_stop_mult: 1.5       # stop distance in ATRs (also used for sizing)
+  max_leverage: 3.0
+  max_positions: 2
+  daily_max_loss: 0.05     # halt new entries after -5% on the day
+
+execution:
+  mode: paper              # paper | testnet | live(disabled in code)
+  poll_seconds: 60
+  order_type: market

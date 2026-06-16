@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "perp-quant-bot"
+version = "0.1.0"
+description = "Research-grade crypto perpetual-futures trading bot: data, features, ML signals, backtest, paper/testnet execution."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "perp-quant-bot" }]
+
+dependencies = [
+    "ccxt>=4.3",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "pyarrow>=15",
+    "scikit-learn>=1.4",
+    "lightgbm>=4.3",
+    "pyyaml>=6.0",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "typer>=0.12",
+    "rich>=13.7",
+    "loguru>=0.7",
+    "joblib>=1.3",
+    "tqdm>=4.66",
+    "python-dateutil>=2.9",
+]
+
+[project.optional-dependencies]
+# Heavy / optional. Install with: pip install -e ".[deep]"
+deep = ["torch>=2.2"]
+plot = ["matplotlib>=3.8"]
+dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9"]
+
+[project.scripts]
+pqb = "perp_quant_bot.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

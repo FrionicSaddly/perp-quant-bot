@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Environment / secrets — NEVER commit real keys
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+credentials.yaml
+secrets.json
+secrets.yaml
+secrets.yml
+api_keys.*
+
+# Data & models (large / private — do not commit)
+data/raw/
+data/processed/
+models/*.pkl
+models/*.joblib
+models/*.txt
+models/*.json
+!models/.gitkeep
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Logs & reports
+logs/
+reports/
+*.log
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
