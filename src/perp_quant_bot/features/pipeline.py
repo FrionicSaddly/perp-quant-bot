@@ -6,6 +6,7 @@ import pandas as pd
 
 from ..config import Config
 from ..logging_conf import setup_logging
+from .cross_asset import anchor_features
 from .microstructure import microstructure_features
 from .technical import compute_atr, technical_features
 
@@ -13,18 +14,26 @@ logger = setup_logging()
 
 
 def build_feature_matrix(
-    ohlcv: pd.DataFrame, funding_oi: pd.DataFrame | None, cfg: Config
+    ohlcv: pd.DataFrame,
+    funding_oi: pd.DataFrame | None,
+    cfg: Config,
+    anchor_ohlcv: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Return ``(X, atr)`` aligned on a common, NaN-free index.
 
     *X* is the feature matrix; *atr* (price units) is returned for the labeler
     and the risk manager so the same volatility estimate is used everywhere.
+    *anchor_ohlcv* (optional) adds leak-free cross-asset (e.g. BTC) features.
     """
     tech = technical_features(ohlcv, cfg)
     micro = microstructure_features(funding_oi, ohlcv.index, cfg)
     atr = compute_atr(ohlcv, cfg.features.atr_period)
 
-    X = pd.concat([tech, micro], axis=1)
+    parts = [tech, micro]
+    if cfg.features.use_cross_asset and anchor_ohlcv is not None and not anchor_ohlcv.empty:
+        parts.append(anchor_features(anchor_ohlcv, ohlcv.index, cfg))
+
+    X = pd.concat(parts, axis=1)
     X = X.replace([np.inf, -np.inf], np.nan)
 
     # Drop columns that are entirely empty (e.g. OI unavailable on the venue)

@@ -32,11 +32,14 @@ class DataCfg(BaseModel):
 
 class FeaturesCfg(BaseModel):
     windows: list[int] = [6, 12, 24, 48, 72, 168]
+    regime_windows: list[int] = [24, 168]  # windows for trend/regime stats (kept small)
     rsi_period: int = 14
     atr_period: int = 14
     bb_period: int = 20
     include_funding: bool = True
     include_open_interest: bool = True
+    use_cross_asset: bool = True
+    anchor_symbol: str = "BTC/USDT:USDT"  # market driver; alts get its return/vol as features
 
 
 class LabelingCfg(BaseModel):

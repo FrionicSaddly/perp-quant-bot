@@ -70,6 +70,7 @@ def backtest(symbol: str = typer.Option("", help="Specific symbol; empty = all")
     import pandas as pd
 
     from .backtest import backtest_signal
+    from .backtest.report import save_report
     from .data.exchange import make_exchange
     from .models import LightGBMModel
     from .pipeline.train import model_path, prepare_dataset
@@ -87,10 +88,26 @@ def backtest(symbol: str = typer.Option("", help="Specific symbol; empty = all")
         sig = pd.Series(model.predict_signal(ds["X"]), index=ds["X"].index)
         bt = backtest_signal(ds["ohlcv"].loc[ds["X"].index], sig, ds["atr_pct"], cfg, ds["funding"])
         m = bt["metrics"]
+        save_report(bt["results"], m, cfg.path("reports"), name=s.replace("/", "-").replace(":", "-"))
         typer.echo(
-            f"{s}: sharpe={m['sharpe']:.2f} ret={m['total_return']:.1%} "
-            f"maxDD={m['max_drawdown']:.1%} trades={m.get('n_trades', 0)}  (in-sample)"
+            f"{s}: sharpe={m['sharpe']:.2f} psr={m.get('psr', float('nan')):.2f} "
+            f"ret={m['total_return']:.1%} maxDD={m['max_drawdown']:.1%} "
+            f"trades={m.get('n_trades', 0)}  (in-sample)"
         )
+
+
+@app.command()
+def leakcheck(symbol: str = typer.Option("", help="Symbol; empty = first in universe")) -> None:
+    """Empirical leakage detector: clean vs shuffled-labels vs injected future leak."""
+    from .pipeline.diagnostics import leak_check
+
+    cfg = load_config()
+    res = leak_check(cfg, symbol or None)
+    typer.echo(
+        f"{res['symbol']}: clean={res['clean']:.2f}  shuffled={res['shuffled']:.2f}  "
+        f"leaked={res['leaked']:.2f}  -> {res['verdict']}"
+    )
+    typer.echo("(shuffled near 0 AND leaked >> clean  =>  pipeline is honest)")
 
 
 @app.command()

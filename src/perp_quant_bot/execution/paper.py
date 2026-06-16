@@ -64,6 +64,10 @@ class CcxtBroker(Broker):
         self.cfg = cfg
         self.exchange = make_exchange(cfg, secrets or load_secrets(), with_keys=True)
         self.quote = cfg.exchange.quote
+        try:
+            self.exchange.load_markets()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("load_markets failed: {}", exc)
 
     def get_equity(self) -> float:
         try:
@@ -92,6 +96,25 @@ class CcxtBroker(Broker):
         except Exception as exc:  # noqa: BLE001
             logger.warning("set_leverage failed for {}: {}", symbol, exc)
 
+    def _round_amount(self, symbol: str, amount: float) -> float:
+        """Round to the exchange's amount precision; drop if below the min lot size."""
+        try:
+            amount = float(self.exchange.amount_to_precision(symbol, amount))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            limits = (self.exchange.market(symbol).get("limits") or {}).get("amount") or {}
+            min_amt = limits.get("min")
+            if min_amt is not None and abs(amount) < float(min_amt):
+                return 0.0
+        except Exception:  # noqa: BLE001
+            pass
+        return amount
+
     def create_order(self, order: Order) -> dict:
-        logger.info("TESTNET {} {:.6f} {}", order.side, order.amount, order.symbol)
-        return self.exchange.create_order(order.symbol, order.type, order.side, order.amount)
+        amount = self._round_amount(order.symbol, order.amount)
+        if amount <= 0:
+            logger.info("Order for {} below min size; skipping", order.symbol)
+            return {"skipped": True, "reason": "below_min_size"}
+        logger.info("TESTNET {} {:.6f} {}", order.side, amount, order.symbol)
+        return self.exchange.create_order(order.symbol, order.type, order.side, amount)

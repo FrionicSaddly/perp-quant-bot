@@ -12,6 +12,7 @@ import pandas as pd
 
 from perp_quant_bot.config import load_config
 from perp_quant_bot.features import build_feature_matrix
+from perp_quant_bot.features.cross_asset import anchor_features
 from perp_quant_bot.features.technical import technical_features
 from perp_quant_bot.labeling import triple_barrier_labels
 from perp_quant_bot.validation import purged_walk_forward_splits
@@ -72,6 +73,30 @@ def test_purge_invariant():
         test_start_ns = times_i8[test_idx[0]]
         # every training label must END before the test window starts
         assert bool((t1_i8[train_idx] < test_start_ns).all()), "purge failed: label leaks into test"
+
+
+def test_cross_asset_features_are_causal():
+    """Anchor (BTC) features at bar t must not depend on the anchor's future bars."""
+    cfg = load_config()
+    ohlcv = make_synthetic_ohlcv()
+    anchor = make_synthetic_ohlcv(seed=99)  # a different series acting as the anchor
+    full = anchor_features(anchor, ohlcv.index, cfg)
+    for t in (300, 900):
+        trunc = anchor_features(anchor.iloc[: t + 1], ohlcv.index[: t + 1], cfg)
+        a = full.iloc[t].to_numpy(dtype=float)
+        b = trunc.iloc[t].to_numpy(dtype=float)
+        assert np.allclose(a, b, atol=1e-8, equal_nan=True), "anchor feature leaked the future"
+
+
+def test_label_weights_present_and_normalized():
+    cfg = load_config()
+    ohlcv = make_synthetic_ohlcv()
+    _, atr = build_feature_matrix(ohlcv, None, cfg)
+    labels = triple_barrier_labels(ohlcv, atr, cfg)
+    assert "w" in labels.columns
+    w = labels["w"].to_numpy(dtype=float)
+    assert np.all(w > 0), "sample weights must be positive"
+    assert abs(float(np.mean(w)) - 1.0) < 1e-6, "sample weights should average to 1"
 
 
 def test_labels_have_no_intrabar_plus_one_bias():

@@ -79,6 +79,20 @@ def technical_features(ohlcv: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     feats["upper_wick"] = (high - close.combine(open_, max)) / rng
     feats["lower_wick"] = (close.combine(open_, min) - low) / rng
 
+    # Regime / statistical features: trend strength, range position, drawdown, shape.
+    for w in cfg.features.regime_windows:
+        change = (close - close.shift(w)).abs()
+        path = close.diff().abs().rolling(w).sum()
+        feats[f"er_{w}"] = change / path.replace(0.0, np.nan)  # Kaufman efficiency ratio
+        hi = high.rolling(w).max()
+        lo = low.rolling(w).min()
+        feats[f"donchian_pos_{w}"] = (close - lo) / (hi - lo).replace(0.0, np.nan)
+        feats[f"dd_from_high_{w}"] = close / hi.replace(0.0, np.nan) - 1.0
+        feats[f"ret_skew_{w}"] = log_ret.rolling(w).skew()
+        feats[f"roll_sharpe_{w}"] = (
+            log_ret.rolling(w).mean() / log_ret.rolling(w).std().replace(0.0, np.nan)
+        )
+
     # Seasonality (cyclical encodings)
     idx = ohlcv.index
     hour = idx.hour.to_numpy()

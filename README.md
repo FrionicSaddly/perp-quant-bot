@@ -89,8 +89,9 @@ perp-quant-bot/
 | `pqb doctor` | Check Python, deps, config, and (optional) exchange keys |
 | `pqb download` | Fetch OHLCV (+ funding/OI) for the universe → parquet |
 | `pqb train` | Build features+labels, run walk-forward CV, fit + save models |
-| `pqb backtest` | Simulate the signal with realistic costs, print metrics |
-| `pqb paper` | Live paper/testnet loop: fetch → predict → size → (simulated) order |
+| `pqb backtest` | Simulate the signal with realistic costs; saves metrics/equity report |
+| `pqb leakcheck` | Empirical leak detector: clean vs shuffled-labels vs injected future leak |
+| `pqb paper` | Live paper/testnet loop with daily-loss + data-staleness guards |
 
 ## License
 

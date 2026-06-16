@@ -3,8 +3,33 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 
 _SECONDS_PER_YEAR = 365.25 * 24 * 3600
+
+
+def probabilistic_sharpe_ratio(returns: pd.Series, benchmark_sr: float = 0.0) -> float:
+    """Probability that the true (per-bar) Sharpe ratio exceeds *benchmark_sr*.
+
+    Bailey & Lopez de Prado: corrects the observed Sharpe for sample length, skew,
+    and fat tails. A high backtest Sharpe with low PSR is likely luck/overfit.
+    """
+    r = returns.dropna().to_numpy(dtype=float)
+    n = len(r)
+    if n < 10:
+        return float("nan")
+    sd = r.std(ddof=1)
+    if sd == 0:
+        return float("nan")
+    sr = r.mean() / sd
+    s = pd.Series(r)
+    skew = float(s.skew())
+    kurt = float(s.kurt()) + 3.0  # pandas returns excess kurtosis -> convert to regular
+    denom = 1.0 - skew * sr + ((kurt - 1.0) / 4.0) * sr * sr
+    if denom <= 0 or not np.isfinite(denom):
+        return float("nan")
+    z = (sr - benchmark_sr) * np.sqrt(n - 1) / np.sqrt(denom)
+    return float(norm.cdf(z))
 
 
 def infer_bars_per_year(index: pd.DatetimeIndex) -> float:
@@ -63,6 +88,7 @@ def performance_summary(
         "cagr": cg,
         "sharpe": sharpe(returns, bpy),
         "sortino": sortino(returns, bpy),
+        "psr": probabilistic_sharpe_ratio(returns),
         "max_drawdown": mdd,
         "calmar": float(cg / abs(mdd)) if mdd != 0 else 0.0,
         "volatility_ann": float(returns.std(ddof=0) * np.sqrt(bpy)),

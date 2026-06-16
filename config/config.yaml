@@ -24,11 +24,14 @@ data:
 features:
   # rolling windows in BARS (with 1h bars: 6h,12h,1d,2d,3d,1w)
   windows: [6, 12, 24, 48, 72, 168]
+  regime_windows: [24, 168]   # windows for trend/regime stats (kept deliberately small)
   rsi_period: 14
   atr_period: 14
   bb_period: 20
   include_funding: true
   include_open_interest: true
+  use_cross_asset: true       # add anchor (BTC) return/vol as exogenous features
+  anchor_symbol: "BTC/USDT:USDT"
 
 labeling:
   method: triple_barrier   # triple_barrier | fixed_horizon

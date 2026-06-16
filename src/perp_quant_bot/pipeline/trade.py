@@ -42,12 +42,31 @@ def make_broker(cfg: Config, secrets):
     raise RuntimeError(f"Execution mode '{mode}' not allowed (live disabled).")
 
 
-def run_once(cfg: Config, broker, models, exchange, rm: RiskManager) -> dict:
+def run_once(cfg: Config, broker, models, exchange, rm: RiskManager, state: dict | None = None) -> dict:
+    state = state if state is not None else {}
     tf = cfg.universe.timeframe
     tf_ms = exchange.parse_timeframe(tf) * 1000
+    now_ms = exchange.milliseconds()
     lookback = max(cfg.features.windows) + 250
-    since_ms = exchange.milliseconds() - lookback * tf_ms
+    since_ms = now_ms - lookback * tf_ms
     decisions: dict[str, dict] = {}
+
+    # Daily-loss circuit breaker: reset the baseline each UTC day; if breached,
+    # flatten positions and stop opening new ones for the rest of the day.
+    equity_now = broker.get_equity()
+    today = pd.Timestamp(now_ms, unit="ms", tz="UTC").date()
+    if state.get("day") != today:
+        state["day"] = today
+        state["day_start_equity"] = equity_now
+    day_start = state.get("day_start_equity") or equity_now
+    daily_pnl_pct = (equity_now / day_start - 1.0) if day_start else 0.0
+    halted = not rm.allowed_to_trade(daily_pnl_pct)
+    if halted:
+        logger.warning("Daily-loss limit hit ({:.1%}); flattening and halting new entries", daily_pnl_pct)
+
+    anchor_ohlcv = None
+    if cfg.features.use_cross_asset:
+        anchor_ohlcv = download_ohlcv(exchange, cfg.features.anchor_symbol, tf, since_ms)
 
     for symbol, model in models.items():
         ohlcv = download_ohlcv(exchange, symbol, tf, since_ms)
@@ -55,9 +74,17 @@ def run_once(cfg: Config, broker, models, exchange, rm: RiskManager) -> dict:
             logger.warning("Not enough bars for {}", symbol)
             continue
         funding = download_funding(exchange, symbol, since_ms) if cfg.features.include_funding else None
-        X, atr = build_feature_matrix(ohlcv, funding, cfg)
+        anchor = None if symbol == cfg.features.anchor_symbol else anchor_ohlcv
+        X, atr = build_feature_matrix(ohlcv, funding, cfg, anchor_ohlcv=anchor)
         if X.empty:
             logger.warning("No features for {}", symbol)
+            continue
+
+        # staleness guard: skip if the latest bar is too old (data-feed problem)
+        last_ts = ohlcv.index[-1]
+        age_ms = now_ms - int(last_ts.value // 1_000_000)
+        if age_ms > 2 * tf_ms:
+            logger.warning("Stale data for {} ({:.0f} min old); skipping", symbol, age_ms / 60000)
             continue
 
         signal = int(model.predict_signal(X.iloc[[-1]])[0])
@@ -68,7 +95,7 @@ def run_once(cfg: Config, broker, models, exchange, rm: RiskManager) -> dict:
             broker.update_price(symbol, price)
         equity = broker.get_equity()
         frac = float(rm.position_fraction(atr_pct_last))
-        target_units = signal * (equity * frac) / price if price > 0 else 0.0
+        target_units = 0.0 if halted else (signal * (equity * frac) / price if price > 0 else 0.0)
         fill = broker.set_target_position(symbol, target_units, price)
 
         decisions[symbol] = {
@@ -101,9 +128,10 @@ def run_paper_loop(once: bool = False, cfg: Config | None = None) -> None:
         "Starting '{}' loop: {} symbols, poll {}s",
         cfg.execution.mode, len(models), cfg.execution.poll_seconds,
     )
+    state: dict = {}
     while True:
         try:
-            run_once(cfg, broker, models, exchange, rm)
+            run_once(cfg, broker, models, exchange, rm, state)
         except Exception as exc:  # noqa: BLE001
             logger.error("Iteration error: {}", exc)
         if once:

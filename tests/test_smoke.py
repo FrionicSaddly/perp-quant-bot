@@ -70,7 +70,7 @@ def test_walk_forward_train_predict_backtest():
     te_idx = X.index[te]
     bt = backtest_signal(ohlcv.loc[te_idx], pd.Series(sig, index=te_idx), atr_pct.loc[te_idx], cfg)
     assert len(bt["equity"]) == len(te_idx)
-    for key in ("sharpe", "max_drawdown", "total_return"):
+    for key in ("sharpe", "psr", "max_drawdown", "total_return"):
         assert key in bt["metrics"]
 
 

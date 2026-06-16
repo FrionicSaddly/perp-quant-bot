@@ -77,8 +77,23 @@ def triple_barrier_labels(ohlcv: pd.DataFrame, atr: pd.Series, cfg: Config) -> p
     valid = exit_pos >= 0
     t1.iloc[np.where(valid)[0]] = times[exit_pos[valid]]
 
+    # Average-uniqueness sample weights (Lopez de Prado): down-weight samples whose
+    # label windows overlap many others, so the model is not dominated by redundant,
+    # highly-correlated labels. Normalized to mean 1 over valid samples.
+    weights = np.full(n, np.nan)
+    starts = np.where(valid)[0]
+    if len(starts) > 0:
+        conc = np.zeros(n)
+        for i in starts:
+            conc[i:exit_pos[i] + 1] += 1.0
+        for i in starts:
+            weights[i] = float(np.mean(1.0 / conc[i:exit_pos[i] + 1]))
+        mean_w = float(np.nanmean(weights[starts]))
+        if mean_w > 0:
+            weights[starts] = weights[starts] / mean_w
+
     out = pd.DataFrame(
-        {"label": labels, "ret": rets, "t1": t1.to_numpy()},
+        {"label": labels, "ret": rets, "t1": t1.to_numpy(), "w": weights},
         index=times,
     )
     return out.dropna(subset=["label"])

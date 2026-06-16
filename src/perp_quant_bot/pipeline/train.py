@@ -37,22 +37,29 @@ def prepare_dataset(cfg: Config, symbol: str, exchange=None):
     if ohlcv.empty:
         raise RuntimeError(f"No OHLCV data for {symbol}")
     funding = load_or_download_funding(cfg, symbol, exchange)
-    X, atr = build_feature_matrix(ohlcv, funding, cfg)
+
+    anchor = None
+    if cfg.features.use_cross_asset and symbol != cfg.features.anchor_symbol:
+        anchor = load_or_download_ohlcv(cfg, cfg.features.anchor_symbol, exchange)
+
+    X, atr = build_feature_matrix(ohlcv, funding, cfg, anchor_ohlcv=anchor)
     labels = triple_barrier_labels(ohlcv, atr, cfg)
     common = X.index.intersection(labels.index)
     X = X.loc[common]
     y = labels.loc[common, "label"].astype(int)
     t1 = labels.loc[common, "t1"]
+    w = labels.loc[common, "w"].astype(float)
     atr_pct = (atr / ohlcv["close"]).reindex(common)
-    return {"ohlcv": ohlcv, "funding": funding, "X": X, "y": y, "t1": t1, "atr_pct": atr_pct}
+    return {"ohlcv": ohlcv, "funding": funding, "X": X, "y": y, "t1": t1, "w": w, "atr_pct": atr_pct}
 
 
 def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
     ds = prepare_dataset(cfg, symbol, exchange)
-    X, y, t1, ohlcv, funding, atr_pct = (
-        ds["X"], ds["y"], ds["t1"], ds["ohlcv"], ds["funding"], ds["atr_pct"]
+    X, y, t1, w, ohlcv, funding, atr_pct = (
+        ds["X"], ds["y"], ds["t1"], ds["w"], ds["ohlcv"], ds["funding"], ds["atr_pct"]
     )
-    logger.info("{}: {} samples | class balance {}", symbol, len(X), y.value_counts().to_dict())
+    logger.info("{}: {} samples | {} features | class balance {}",
+                symbol, len(X), X.shape[1], y.value_counts().to_dict())
 
     splits = purged_walk_forward_splits(
         X.index, t1, cfg.validation.n_splits, cfg.validation.embargo_bars
@@ -64,7 +71,7 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
     fold_sharpes: list[float] = []
     for fi, (tr, te) in enumerate(splits):
         model = build_model(cfg)
-        model.fit(X.iloc[tr], y.iloc[tr])
+        model.fit(X.iloc[tr], y.iloc[tr], sample_weight=w.iloc[tr].to_numpy())
         sig = model.predict_signal(X.iloc[te])
         oos_signal.iloc[te] = sig
         te_idx = X.index[te]
@@ -95,7 +102,7 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
 
     # final model trained on all available data
     final = build_model(cfg)
-    final.fit(X, y)
+    final.fit(X, y, sample_weight=w.to_numpy())
     path = model_path(cfg, symbol)
     final.save(path)
 
