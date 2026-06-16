@@ -1,0 +1,62 @@
+name: opennews-logger
+
+# Polls the OpenNews/6551 API on a schedule and appends new items to the
+# `opennews-data` branch (kept separate so `main` stays code-only). The token is a
+# GitHub Actions secret, never in the repo. Builds a timestamped feature stream for
+# future honest backtesting.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every ~10 min (GitHub's minimum is 5; runs may be delayed)
+  workflow_dispatch: {}
+
+concurrency:
+  group: opennews-logger
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install minimal deps
+        run: pip install --quiet httpx pandas pyarrow
+
+      - name: Restore previous data (if the data branch exists)
+        run: |
+          git fetch origin opennews-data || true
+          if git rev-parse --verify origin/opennews-data >/dev/null 2>&1; then
+            git show origin/opennews-data:opennews_log.parquet > opennews_log.parquet || true
+          fi
+
+      - name: Poll OpenNews
+        env:
+          OPENNEWS_TOKEN: ${{ secrets.OPENNEWS_TOKEN }}
+        run: python scripts/ci_opennews_poll.py --out opennews_log.parquet
+
+      - name: Commit data to the opennews-data branch (plumbing keeps main clean)
+        run: |
+          if [ ! -f opennews_log.parquet ]; then
+            echo "no data file; nothing to push"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BLOB=$(git hash-object -w opennews_log.parquet)
+          TREE=$(printf '100644 blob %s\topennews_log.parquet\n' "$BLOB" | git mktree)
+          if PARENT=$(git rev-parse --verify origin/opennews-data 2>/dev/null); then
+            COMMIT=$(git commit-tree "$TREE" -p "$PARENT" -m "opennews poll $(date -u +%FT%TZ)")
+          else
+            COMMIT=$(git commit-tree "$TREE" -m "opennews poll init $(date -u +%FT%TZ)")
+          fi
+          git push origin "$COMMIT:refs/heads/opennews-data"
+          echo "pushed $COMMIT to opennews-data"
