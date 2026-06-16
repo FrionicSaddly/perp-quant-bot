@@ -33,12 +33,22 @@ def build_feature_matrix(
         logger.info("Dropping {} empty feature columns: {}", len(empty_cols), empty_cols)
         X = X.drop(columns=empty_cols)
 
-    # Drop warmup rows where any feature is still NaN
-    before = len(X)
-    X = X.dropna(how="any")
-    logger.info("Feature matrix: {} rows x {} cols (dropped {} warmup rows)",
-                len(X), X.shape[1], before - len(X))
+    # Cut the warmup prefix up to the first fully-valid row.
+    valid = X.dropna(how="any")
+    if valid.empty:
+        logger.warning("Feature matrix is empty after warmup")
+        return valid, atr.reindex(valid.index)
+    X = X.loc[valid.index[0]:]
 
+    # Leak-safe imputation of INTERIOR gaps: forward-fill only (uses past),
+    # never back-fill. Keeps a contiguous bar index so backtest returns don't
+    # silently span dropped rows.
+    interior = int(X.isna().to_numpy().sum())
+    if interior:
+        logger.info("Forward-filling {} interior NaNs (leak-safe, past-only)", interior)
+        X = X.ffill().dropna(how="any")
+
+    logger.info("Feature matrix: {} rows x {} cols", len(X), X.shape[1])
     atr = atr.reindex(X.index)
     return X, atr
 

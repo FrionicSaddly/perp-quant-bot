@@ -64,6 +64,7 @@ backtest:
   slippage_bps: 2.0        # extra cost per side, in basis points
   apply_funding: true
   initial_capital: 10000.0
+  fill: next_open          # next_open = fill at next bar open (realistic) | close
 
 risk:
   risk_per_trade: 0.01     # fraction of equity risked per trade (to the stop)

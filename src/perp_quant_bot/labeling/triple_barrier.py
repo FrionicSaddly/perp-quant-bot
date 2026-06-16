@@ -52,10 +52,17 @@ def triple_barrier_labels(ohlcv: pd.DataFrame, atr: pd.Series, cfg: Config) -> p
         ret = close[end] / entry - 1.0
         touched = False
         for j in range(i + 1, end + 1):
-            if high[j] >= up:
+            hit_up = high[j] >= up
+            hit_dn = low[j] <= dn
+            if hit_up and hit_dn:
+                # both barriers touched in the same bar: intrabar order is unknown
+                # from OHLC, so label it neutral instead of guessing (no +1 bias).
+                lab, ex, ret, touched = 0, j, close[j] / entry - 1.0, True
+                break
+            if hit_up:
                 lab, ex, ret, touched = 1, j, up / entry - 1.0, True
                 break
-            if low[j] <= dn:
+            if hit_dn:
                 lab, ex, ret, touched = -1, j, dn / entry - 1.0, True
                 break
         if not touched:

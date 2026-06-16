@@ -57,11 +57,18 @@ def backtest_signal(
     rm = RiskManager(cfg.risk)
     size_frac = rm.position_fraction(atr_pct).reindex(idx).fillna(0.0)
 
-    # decide at close[t], hold for bar t+1
+    # decide at close[t]; the position becomes effective on the NEXT bar.
     pos_target = (signal * size_frac).astype(float)
     pos_used = pos_target.shift(1).fillna(0.0)
 
-    bar_ret = close.pct_change().fillna(0.0)
+    if getattr(cfg.backtest, "fill", "next_open") == "next_open":
+        # realistic: filled at the next bar's OPEN, earn that bar's open->open return.
+        # Decision at close[t-1] -> fill at open[t] -> earn open[t]->open[t+1].
+        open_ = ohlcv["open"]
+        bar_ret = (open_.shift(-1) / open_ - 1.0).fillna(0.0)
+    else:
+        # close-to-close approximation (decision and fill at the same close[t-1]).
+        bar_ret = close.pct_change().fillna(0.0)
     gross = pos_used * bar_ret
 
     turnover = (pos_used - pos_used.shift(1).fillna(0.0)).abs()

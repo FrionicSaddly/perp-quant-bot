@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+import numpy as np
 import pandas as pd
 
 from ..backtest import backtest_signal
@@ -81,6 +82,17 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
         ohlcv.loc[oos_idx], oos_signal.loc[oos_idx], atr_pct.loc[oos_idx], cfg, funding
     )
 
+    # Honest baselines: the signal must beat buy&hold AND a random signal OOS, after costs.
+    oos_close = ohlcv.loc[oos_idx, "close"]
+    buyhold_return = float(oos_close.iloc[-1] / oos_close.iloc[0] - 1.0)
+    rng = np.random.default_rng(42)
+    rand_sharpes = []
+    for _ in range(3):
+        rand_sig = pd.Series(rng.choice([-1, 0, 1], size=len(oos_idx)), index=oos_idx)
+        rb = backtest_signal(ohlcv.loc[oos_idx], rand_sig, atr_pct.loc[oos_idx], cfg, funding)
+        rand_sharpes.append(rb["metrics"]["sharpe"])
+    random_sharpe = float(np.mean(rand_sharpes))
+
     # final model trained on all available data
     final = build_model(cfg)
     final.fit(X, y)
@@ -97,6 +109,10 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
         "class_balance": {int(k): int(v) for k, v in y.value_counts().items()},
         "fold_sharpes": [round(s, 3) for s in fold_sharpes],
         "oos_metrics": {k: round(float(v), 4) for k, v in oos_bt["metrics"].items()},
+        "baselines": {
+            "buyhold_return": round(buyhold_return, 4),
+            "random_sharpe": round(random_sharpe, 3),
+        },
     }
     with open(str(path).replace(".pkl", ".json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
@@ -109,6 +125,11 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
         oos_bt["metrics"]["max_drawdown"],
         oos_bt["metrics"].get("hit_rate", float("nan")),
         path.name,
+    )
+    logger.info(
+        "{} edge check: strat_sharpe={:.2f} vs random={:.2f} | strat_ret={:.1%} vs buy&hold={:.1%}",
+        symbol, oos_bt["metrics"]["sharpe"], random_sharpe,
+        oos_bt["metrics"]["total_return"], buyhold_return,
     )
     return {"meta": meta, "oos": oos_bt}
 

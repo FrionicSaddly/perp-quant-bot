@@ -64,6 +64,7 @@ class BacktestCfg(BaseModel):
     slippage_bps: float = 2.0
     apply_funding: bool = True
     initial_capital: float = 10000.0
+    fill: str = "next_open"  # next_open (realistic) | close (optimistic approximation)
 
 
 class RiskCfg(BaseModel):
