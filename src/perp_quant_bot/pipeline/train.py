@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from ..backtest import backtest_signal
+from ..backtest.metrics import deflated_sharpe_ratio, infer_bars_per_year
 from ..config import Config, load_config
 from ..data import load_or_download_funding, load_or_download_ohlcv
 from ..data.exchange import make_exchange
@@ -21,7 +22,12 @@ logger = setup_logging()
 
 
 def build_model(cfg: Config) -> LightGBMModel:
-    return LightGBMModel(params=cfg.model.params, threshold=cfg.model.prob_threshold)
+    return LightGBMModel(
+        params=cfg.model.params,
+        threshold=cfg.model.prob_threshold,
+        n_seeds=cfg.model.n_seeds,
+        calibrate=cfg.model.calibrate,
+    )
 
 
 def _sanitize(symbol: str) -> str:
@@ -100,6 +106,12 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
         rand_sharpes.append(rb["metrics"]["sharpe"])
     random_sharpe = float(np.mean(rand_sharpes))
 
+    # Deflated Sharpe Ratio: credit the OOS Sharpe only after accounting for the
+    # number of CV trials (anti multiple-testing / anti-overfitting).
+    bpy = infer_bars_per_year(oos_idx)
+    per_bar_trials = [s / np.sqrt(bpy) for s in fold_sharpes if np.isfinite(s)]
+    dsr = deflated_sharpe_ratio(oos_bt["results"]["net_ret"], per_bar_trials)
+
     # final model trained on all available data
     final = build_model(cfg)
     final.fit(X, y, sample_weight=w.to_numpy())
@@ -120,6 +132,7 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
             "buyhold_return": round(buyhold_return, 4),
             "random_sharpe": round(random_sharpe, 3),
         },
+        "deflated_sharpe": round(float(dsr), 4),
     }
     with open(str(path).replace(".pkl", ".json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
@@ -134,8 +147,9 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
         path.name,
     )
     logger.info(
-        "{} edge check: strat_sharpe={:.2f} vs random={:.2f} | strat_ret={:.1%} vs buy&hold={:.1%}",
+        "{} edge check: sharpe={:.2f} (random={:.2f}) PSR={:.2f} DSR={:.2f} | ret={:.1%} (buy&hold={:.1%})",
         symbol, oos_bt["metrics"]["sharpe"], random_sharpe,
+        oos_bt["metrics"].get("psr", float("nan")), dsr,
         oos_bt["metrics"]["total_return"], buyhold_return,
     )
     return {"meta": meta, "oos": oos_bt}

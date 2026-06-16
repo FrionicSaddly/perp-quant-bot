@@ -111,6 +111,23 @@ def leakcheck(symbol: str = typer.Option("", help="Symbol; empty = first in univ
 
 
 @app.command()
+def importance(symbol: str = typer.Option("", help="Symbol; empty = first in universe")) -> None:
+    """Out-of-sample permutation importance (find noise features to prune)."""
+    from .pipeline.diagnostics import permutation_importance
+
+    cfg = load_config()
+    res = permutation_importance(cfg, symbol or None)
+    imp = res["importance"]
+    typer.echo(f"{res['symbol']}: base accuracy={res['base_accuracy']:.3f}")
+    typer.echo("Top features (most accuracy lost when shuffled):")
+    for name, val in imp.head(12).items():
+        typer.echo(f"  {name:<24} {val:+.4f}")
+    typer.echo("Weakest (prune candidates):")
+    for name, val in imp.tail(6).items():
+        typer.echo(f"  {name:<24} {val:+.4f}")
+
+
+@app.command()
 def paper(once: bool = typer.Option(False, help="Run a single iteration then exit")) -> None:
     """Run the paper/testnet trading loop (no real money)."""
     from .pipeline.trade import run_paper_loop

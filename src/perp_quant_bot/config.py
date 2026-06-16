@@ -40,6 +40,8 @@ class FeaturesCfg(BaseModel):
     include_open_interest: bool = True
     use_cross_asset: bool = True
     anchor_symbol: str = "BTC/USDT:USDT"  # market driver; alts get its return/vol as features
+    use_fracdiff: bool = False  # fractional differentiation of log-price (stationary + memory)
+    frac_d: float = 0.4         # differencing order in (0,1)
 
 
 class LabelingCfg(BaseModel):
@@ -53,6 +55,8 @@ class LabelingCfg(BaseModel):
 class ModelCfg(BaseModel):
     type: str = "lightgbm"
     prob_threshold: float = 0.40
+    n_seeds: int = 1            # seed-ensemble size (averages probabilities)
+    calibrate: bool = False     # leak-safe chronological probability calibration
     params: dict = Field(default_factory=dict)
 
 

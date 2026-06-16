@@ -65,3 +65,39 @@ def leak_check(cfg: Config | None = None, symbol: str | None = None, exchange=No
         symbol, clean, shuffled, leaked, verdict,
     )
     return result
+
+
+def permutation_importance(cfg: Config | None = None, symbol: str | None = None, exchange=None) -> dict:
+    """Out-of-sample permutation importance: how much holdout accuracy drops when
+    each feature is shuffled. Low/negative drop = noise feature (prune candidate)."""
+    cfg = cfg or load_config()
+    symbol = symbol or cfg.universe.symbols[0]
+    exchange = exchange or make_exchange(cfg)
+
+    ds = prepare_dataset(cfg, symbol, exchange)
+    X, y = ds["X"], ds["y"]
+    n = len(X)
+    if n < 200:
+        raise RuntimeError(f"Not enough samples ({n})")
+    split = int(n * 0.7)
+    X_tr, y_tr = X.iloc[:split], y.iloc[:split]
+    X_te, y_te = X.iloc[split:], y.iloc[split:]
+
+    model = build_model(cfg)
+    model.fit(X_tr, y_tr)
+    classes = np.asarray(model.classes_)
+    y_true = y_te.to_numpy()
+
+    base_acc = float((classes[model.predict_proba(X_te).argmax(1)] == y_true).mean())
+    rng = np.random.default_rng(0)
+    drops: dict[str, float] = {}
+    for col in X.columns:
+        Xp = X_te.copy()
+        Xp[col] = rng.permutation(Xp[col].to_numpy())
+        acc = float((classes[model.predict_proba(Xp).argmax(1)] == y_true).mean())
+        drops[col] = base_acc - acc
+
+    importance = pd.Series(drops).sort_values(ascending=False)
+    logger.info("permutation importance {} (base_acc={:.3f}): top={}",
+                symbol, base_acc, list(importance.head(5).index))
+    return {"symbol": symbol, "base_accuracy": base_acc, "importance": importance}

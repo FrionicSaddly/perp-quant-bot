@@ -10,11 +10,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from perp_quant_bot.backtest.metrics import deflated_sharpe_ratio, probabilistic_sharpe_ratio
 from perp_quant_bot.config import load_config
 from perp_quant_bot.features import build_feature_matrix
 from perp_quant_bot.features.cross_asset import anchor_features
 from perp_quant_bot.features.technical import technical_features
 from perp_quant_bot.labeling import triple_barrier_labels
+from perp_quant_bot.models import LightGBMModel
 from perp_quant_bot.validation import purged_walk_forward_splits
 
 
@@ -97,6 +99,36 @@ def test_label_weights_present_and_normalized():
     w = labels["w"].to_numpy(dtype=float)
     assert np.all(w > 0), "sample weights must be positive"
     assert abs(float(np.mean(w)) - 1.0) < 1e-6, "sample weights should average to 1"
+
+
+def test_model_ensemble_and_calibration():
+    """Seed-ensemble + calibrated probabilities are well-formed (sum to 1, valid signals)."""
+    cfg = load_config()
+    ohlcv = make_synthetic_ohlcv(n=2200)
+    X, atr = build_feature_matrix(ohlcv, None, cfg)
+    labels = triple_barrier_labels(ohlcv, atr, cfg)
+    common = X.index.intersection(labels.index)
+    X = X.loc[common]
+    y = labels.loc[common, "label"].astype(int)
+
+    model = LightGBMModel(params=cfg.model.params, threshold=0.4, n_seeds=3, calibrate=True)
+    cut = int(len(X) * 0.8)
+    model.fit(X.iloc[:cut], y.iloc[:cut])
+    proba = model.predict_proba(X.iloc[cut:])
+    assert proba.shape[1] == len(model.classes_)
+    assert np.allclose(proba.sum(axis=1), 1.0, atol=1e-6)
+    assert set(np.unique(model.predict_signal(X.iloc[cut:]))).issubset({-1, 0, 1})
+
+
+def test_psr_and_dsr_in_unit_interval():
+    rng = np.random.default_rng(0)
+    r = pd.Series(rng.normal(0.0008, 0.01, 1500))
+    psr = probabilistic_sharpe_ratio(r)
+    dsr = deflated_sharpe_ratio(r, [0.5, 0.7, 0.6, 0.4, 0.8])
+    assert 0.0 <= psr <= 1.0
+    assert 0.0 <= dsr <= 1.0
+    # DSR is stricter than PSR (benchmark raised for multiple testing)
+    assert dsr <= psr + 1e-9
 
 
 def test_labels_have_no_intrabar_plus_one_bias():

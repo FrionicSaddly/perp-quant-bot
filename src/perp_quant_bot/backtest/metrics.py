@@ -32,6 +32,27 @@ def probabilistic_sharpe_ratio(returns: pd.Series, benchmark_sr: float = 0.0) ->
     return float(norm.cdf(z))
 
 
+def deflated_sharpe_ratio(returns: pd.Series, trial_sharpes) -> float:
+    """Deflated Sharpe Ratio: PSR against the Sharpe you'd expect from the BEST of
+    N random trials. Accounts for selection bias / multiple testing — a high DSR is
+    far more credible than a high raw Sharpe.
+
+    *trial_sharpes* must be in the SAME (per-bar) units as the returns series.
+    """
+    trials = np.asarray([t for t in trial_sharpes if np.isfinite(t)], dtype=float)
+    n_trials = len(trials)
+    if n_trials < 2:
+        return probabilistic_sharpe_ratio(returns, 0.0)
+    var_sr = float(trials.var(ddof=1))
+    if var_sr <= 0:
+        return probabilistic_sharpe_ratio(returns, 0.0)
+    gamma = 0.5772156649015329  # Euler-Mascheroni
+    z1 = norm.ppf(1.0 - 1.0 / n_trials)
+    z2 = norm.ppf(1.0 - 1.0 / (n_trials * np.e))
+    sr0 = np.sqrt(var_sr) * ((1.0 - gamma) * z1 + gamma * z2)
+    return probabilistic_sharpe_ratio(returns, benchmark_sr=sr0)
+
+
 def infer_bars_per_year(index: pd.DatetimeIndex) -> float:
     if len(index) < 3:
         return 365.25 * 24  # assume hourly

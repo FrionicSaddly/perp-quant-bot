@@ -35,6 +35,33 @@ def _macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
     return macd, macd_signal, macd - macd_signal
 
 
+def _ffd_weights(d: float, thres: float = 1e-4, max_width: int = 1000) -> np.ndarray:
+    """Fixed-width fractional-differencing weights (Lopez de Prado)."""
+    w = [1.0]
+    k = 1
+    while k < max_width:
+        wk = -w[-1] * (d - k + 1) / k
+        if abs(wk) < thres:
+            break
+        w.append(wk)
+        k += 1
+    return np.array(w[::-1])
+
+
+def frac_diff(series: pd.Series, d: float, thres: float = 1e-4) -> pd.Series:
+    """Fractionally differentiate a series: stationary while preserving memory.
+
+    Uses only past values within a fixed window, so it is leak-free.
+    """
+    w = _ffd_weights(d, thres)
+    width = len(w)
+    vals = series.to_numpy(dtype=float)
+    out = np.full(len(vals), np.nan)
+    for i in range(width - 1, len(vals)):
+        out[i] = float(np.dot(w, vals[i - width + 1 : i + 1]))
+    return pd.Series(out, index=series.index)
+
+
 def technical_features(ohlcv: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     close = ohlcv["close"]
     high, low, open_ = ohlcv["high"], ohlcv["low"], ohlcv["open"]
@@ -92,6 +119,10 @@ def technical_features(ohlcv: pd.DataFrame, cfg: Config) -> pd.DataFrame:
         feats[f"roll_sharpe_{w}"] = (
             log_ret.rolling(w).mean() / log_ret.rolling(w).std().replace(0.0, np.nan)
         )
+
+    # Fractional differentiation of log-price: stationary with memory (leak-free).
+    if cfg.features.use_fracdiff:
+        feats["fracdiff_logclose"] = frac_diff(np.log(close), cfg.features.frac_d)
 
     # Seasonality (cyclical encodings)
     idx = ohlcv.index

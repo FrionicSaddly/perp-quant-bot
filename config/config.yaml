@@ -32,6 +32,8 @@ features:
   include_open_interest: true
   use_cross_asset: true       # add anchor (BTC) return/vol as exogenous features
   anchor_symbol: "BTC/USDT:USDT"
+  use_fracdiff: true          # fractional differentiation of log-price (stationary + memory)
+  frac_d: 0.4                 # differencing order in (0,1)
 
 labeling:
   method: triple_barrier   # triple_barrier | fixed_horizon
@@ -43,6 +45,8 @@ labeling:
 model:
   type: lightgbm
   prob_threshold: 0.40     # min class prob (above neutral) required to take a trade
+  n_seeds: 5               # seed-ensemble: average probabilities over N models (variance down)
+  calibrate: true          # leak-safe chronological probability calibration
   params:
     # objective/num_class are inferred automatically from the labels
     n_estimators: 600
