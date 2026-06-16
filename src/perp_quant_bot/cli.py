@@ -150,6 +150,17 @@ def xsection(
 
 
 @app.command()
+def newslog(
+    once: bool = typer.Option(False, help="Single poll then exit"),
+    interval: int = typer.Option(90, help="Seconds between polls"),
+) -> None:
+    """Continuously log OpenNews items to disk (builds backtestable history)."""
+    from .pipeline.news_logger import run_logger
+
+    run_logger(once=once, interval=interval)
+
+
+@app.command()
 def paper(once: bool = typer.Option(False, help="Run a single iteration then exit")) -> None:
     """Run the paper/testnet trading loop (no real money)."""
     from .pipeline.trade import run_paper_loop
