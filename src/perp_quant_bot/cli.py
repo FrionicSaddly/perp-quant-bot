@@ -128,6 +128,28 @@ def importance(symbol: str = typer.Option("", help="Symbol; empty = first in uni
 
 
 @app.command()
+def xsection(
+    timeframe: str = typer.Option("1d", help="Bar timeframe for the factor"),
+    lookback: int = typer.Option(30, help="Momentum lookback in bars"),
+    top_frac: float = typer.Option(0.30, help="Long-top / short-bottom fraction"),
+) -> None:
+    """Cross-sectional momentum, market-neutral (validated on real history)."""
+    from .strategies import run_cross_sectional
+
+    res = run_cross_sectional(timeframe=timeframe, lookback=lookback, top_frac=top_frac)
+    m = res["metrics"]
+    typer.echo(
+        f"cross-sectional ({m['n_symbols']} names): sharpe={m['sharpe']:.2f} "
+        f"psr={m.get('psr', float('nan')):.2f} dsr={m.get('deflated_sharpe', float('nan')):.2f} "
+        f"ret={m['total_return']:.1%} maxDD={m['max_drawdown']:.1%}"
+    )
+    typer.echo(
+        f"  vs equal-weight market: ret={m.get('benchmark_eqw_return', 0.0):.1%} | "
+        f"avg turnover/bar={m.get('avg_turnover', 0.0):.2f}"
+    )
+
+
+@app.command()
 def paper(once: bool = typer.Option(False, help="Run a single iteration then exit")) -> None:
     """Run the paper/testnet trading loop (no real money)."""
     from .pipeline.trade import run_paper_loop

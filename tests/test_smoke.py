@@ -74,6 +74,27 @@ def test_walk_forward_train_predict_backtest():
         assert key in bt["metrics"]
 
 
+def test_cross_sectional_backtest_is_market_neutral():
+    from perp_quant_bot.strategies.cross_sectional import cross_sectional_backtest
+
+    cfg = load_config()
+    rng = np.random.default_rng(3)
+    idx = pd.date_range("2022-01-01", periods=600, freq="1D", tz="UTC")
+    cols = {
+        f"SYM{i}/USDT:USDT": 100.0 * np.exp(np.cumsum(rng.normal(0.0003, 0.03, len(idx))))
+        for i in range(10)
+    }
+    close = pd.DataFrame(cols, index=idx)
+    res = cross_sectional_backtest(close, cfg, lookback=30, top_frac=0.3, min_names=4)
+    m = res["metrics"]
+    for key in ("sharpe", "psr", "deflated_sharpe", "max_drawdown", "n_symbols"):
+        assert key in m
+    assert m["n_symbols"] == 10
+    assert len(res["equity"]) > 0
+    # market-neutral: net weight each bar must be ~0
+    assert float(res["weights"].sum(axis=1).abs().max()) < 1e-9
+
+
 def test_paper_broker_fills():
     b = PaperBroker(initial_cash=10_000.0, fee_rate=0.0)
     b.update_price("BTC/USDT:USDT", 100.0)
