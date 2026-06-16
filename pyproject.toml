@@ -34,6 +34,8 @@ dependencies = [
 deep = ["torch>=2.2"]
 plot = ["matplotlib>=3.8"]
 dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9"]
+# agent SDK: run Cursor agents programmatically (leakage audits, research loops, CI).
+# Not needed at runtime by the bot. Install with: pip install -e ".[sdk]"
 
 [project.scripts]
 pqb = "perp_quant_bot.cli:app"
