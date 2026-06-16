@@ -9,7 +9,7 @@ import pandas as pd
 
 from ..config import Config
 from ..logging_conf import setup_logging
-from .exchange import make_exchange
+from .exchange import make_data_exchange
 
 logger = setup_logging()
 
@@ -21,7 +21,8 @@ def _sanitize(symbol: str) -> str:
 
 
 def _cache_path(cfg: Config, symbol: str) -> Path:
-    name = f"{cfg.exchange.id}_{_sanitize(symbol)}_{cfg.universe.timeframe}_ohlcv.parquet"
+    venue = cfg.data.exchange_id or cfg.exchange.id
+    name = f"{venue}_{_sanitize(symbol)}_{cfg.universe.timeframe}_ohlcv.parquet"
     return cfg.raw_dir() / name
 
 
@@ -53,11 +54,9 @@ def download_ohlcv(
         last_ts = batch[-1][0]
         next_cursor = last_ts + tf_ms
         if next_cursor <= cursor:
-            break
+            break  # no forward progress -> stop (avoids infinite loop)
         cursor = next_cursor
         logger.debug("{}: {} bars (cursor={})", symbol, len(rows), cursor)
-        if len(batch) < limit:
-            break
         time.sleep(max(exchange.rateLimit, 50) / 1000)
 
     if not rows:
@@ -78,7 +77,7 @@ def load_or_download_ohlcv(cfg: Config, symbol: str, exchange=None, force: bool 
         logger.info("Loading cached OHLCV: {}", path.name)
         return pd.read_parquet(path)
 
-    exchange = exchange or make_exchange(cfg)
+    exchange = exchange or make_data_exchange(cfg)
     since_ms = exchange.parse8601(cfg.universe.since)
     logger.info("Downloading OHLCV {} {} since {}", symbol, cfg.universe.timeframe, cfg.universe.since)
     df = download_ohlcv(exchange, symbol, cfg.universe.timeframe, since_ms)

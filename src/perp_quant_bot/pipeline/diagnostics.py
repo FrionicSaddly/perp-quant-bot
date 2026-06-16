@@ -17,7 +17,7 @@ import pandas as pd
 
 from ..backtest import backtest_signal
 from ..config import Config, load_config
-from ..data.exchange import make_exchange
+from ..data.exchange import make_data_exchange
 from ..logging_conf import setup_logging
 from .train import build_model, prepare_dataset
 
@@ -27,7 +27,7 @@ logger = setup_logging()
 def leak_check(cfg: Config | None = None, symbol: str | None = None, exchange=None) -> dict:
     cfg = cfg or load_config()
     symbol = symbol or cfg.universe.symbols[0]
-    exchange = exchange or make_exchange(cfg)
+    exchange = exchange or make_data_exchange(cfg)
 
     ds = prepare_dataset(cfg, symbol, exchange)
     X, y, ohlcv, funding, atr_pct = ds["X"], ds["y"], ds["ohlcv"], ds["funding"], ds["atr_pct"]
@@ -72,7 +72,7 @@ def permutation_importance(cfg: Config | None = None, symbol: str | None = None,
     each feature is shuffled. Low/negative drop = noise feature (prune candidate)."""
     cfg = cfg or load_config()
     symbol = symbol or cfg.universe.symbols[0]
-    exchange = exchange or make_exchange(cfg)
+    exchange = exchange or make_data_exchange(cfg)
 
     ds = prepare_dataset(cfg, symbol, exchange)
     X, y = ds["X"], ds["y"]

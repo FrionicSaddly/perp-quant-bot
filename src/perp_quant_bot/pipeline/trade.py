@@ -95,7 +95,12 @@ def run_once(cfg: Config, broker, models, exchange, rm: RiskManager, state: dict
             broker.update_price(symbol, price)
         equity = broker.get_equity()
         frac = float(rm.position_fraction(atr_pct_last))
-        target_units = 0.0 if halted else (signal * (equity * frac) / price if price > 0 else 0.0)
+        if halted:
+            target_units = 0.0
+        elif signal == 0 and getattr(cfg.backtest, "position_mode", "hold") == "hold":
+            target_units = broker.get_position(symbol)  # hold conviction through neutral
+        else:
+            target_units = signal * (equity * frac) / price if price > 0 else 0.0
         fill = broker.set_target_position(symbol, target_units, price)
 
         decisions[symbol] = {

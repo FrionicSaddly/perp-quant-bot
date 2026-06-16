@@ -11,7 +11,7 @@ from ..backtest import backtest_signal
 from ..backtest.metrics import deflated_sharpe_ratio, infer_bars_per_year
 from ..config import Config, load_config
 from ..data import load_or_download_funding, load_or_download_ohlcv
-from ..data.exchange import make_exchange
+from ..data.exchange import make_data_exchange
 from ..features import build_feature_matrix
 from ..labeling import triple_barrier_labels
 from ..logging_conf import setup_logging
@@ -157,7 +157,7 @@ def train_symbol(cfg: Config, symbol: str, exchange=None) -> dict:
 
 def train_all(cfg: Config | None = None) -> dict:
     cfg = cfg or load_config()
-    exchange = make_exchange(cfg)
+    exchange = make_data_exchange(cfg)
     out = {}
     for symbol in cfg.universe.symbols:
         try:

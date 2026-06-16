@@ -57,8 +57,19 @@ def backtest_signal(
     rm = RiskManager(cfg.risk)
     size_frac = rm.position_fraction(atr_pct).reindex(idx).fillna(0.0)
 
+    # Build the target position from the discrete signal.
+    if getattr(cfg.backtest, "position_mode", "hold") == "hold":
+        # Hold the last conviction through neutral signals; only flip on a new
+        # nonzero signal. Size is fixed at entry, so there is no per-bar resizing
+        # churn -> turnover (and cost) collapses to actual conviction changes.
+        held = signal.replace(0.0, np.nan).ffill().fillna(0.0)
+        entry = held != held.shift(1)
+        size_at_entry = size_frac.where(entry).ffill().fillna(0.0)
+        pos_target = (held * size_at_entry).astype(float)
+    else:
+        pos_target = (signal * size_frac).astype(float)
+
     # decide at close[t]; the position becomes effective on the NEXT bar.
-    pos_target = (signal * size_frac).astype(float)
     pos_used = pos_target.shift(1).fillna(0.0)
 
     if getattr(cfg.backtest, "fill", "next_open") == "next_open":

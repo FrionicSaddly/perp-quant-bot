@@ -8,7 +8,7 @@ import pandas as pd
 
 from ..config import Config
 from ..logging_conf import setup_logging
-from .exchange import make_exchange
+from .exchange import make_data_exchange
 
 logger = setup_logging()
 
@@ -18,7 +18,8 @@ def _sanitize(symbol: str) -> str:
 
 
 def _cache_path(cfg: Config, symbol: str) -> Path:
-    name = f"{cfg.exchange.id}_{_sanitize(symbol)}_funding_oi.parquet"
+    venue = cfg.data.exchange_id or cfg.exchange.id
+    name = f"{venue}_{_sanitize(symbol)}_funding_oi.parquet"
     return cfg.raw_dir() / name
 
 
@@ -44,8 +45,6 @@ def download_funding(exchange, symbol: str, since_ms: int, until_ms: int | None 
         if last_ts is None or last_ts + 1 <= cursor:
             break
         cursor = last_ts + 1
-        if len(batch) < 200:
-            break
         time.sleep(max(exchange.rateLimit, 50) / 1000)
 
     if not rows:
@@ -85,8 +84,6 @@ def download_open_interest(
         if last_ts is None or last_ts + 1 <= cursor:
             break
         cursor = last_ts + 1
-        if len(batch) < 200:
-            break
         time.sleep(max(exchange.rateLimit, 50) / 1000)
 
     if not rows:
@@ -111,7 +108,7 @@ def load_or_download_funding(cfg: Config, symbol: str, exchange=None, force: boo
         logger.info("Loading cached funding/OI: {}", path.name)
         return pd.read_parquet(path)
 
-    exchange = exchange or make_exchange(cfg)
+    exchange = exchange or make_data_exchange(cfg)
     since_ms = exchange.parse8601(cfg.universe.since)
 
     funding = download_funding(exchange, symbol, since_ms)

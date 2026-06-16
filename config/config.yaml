@@ -20,6 +20,7 @@ universe:
 data:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
+  exchange_id: okx     # data source (mainnet, public, keyless). Execution stays on `exchange.id`.
 
 features:
   # rolling windows in BARS (with 1h bars: 6h,12h,1d,2d,3d,1w)
@@ -44,12 +45,12 @@ labeling:
 
 model:
   type: lightgbm
-  prob_threshold: 0.40     # min class prob (above neutral) required to take a trade
-  n_seeds: 5               # seed-ensemble: average probabilities over N models (variance down)
+  prob_threshold: 0.55     # only trade on confident calibrated probability (gates over-trading)
+  n_seeds: 3               # seed-ensemble: average probabilities over N models (variance down)
   calibrate: true          # leak-safe chronological probability calibration
   params:
     # objective/num_class are inferred automatically from the labels
-    n_estimators: 600
+    n_estimators: 300
     learning_rate: 0.03
     num_leaves: 63
     max_depth: -1
@@ -72,11 +73,12 @@ backtest:
   apply_funding: true
   initial_capital: 10000.0
   fill: next_open          # next_open = fill at next bar open (realistic) | close
+  position_mode: hold      # hold position through neutral signals (low turnover) | flip
 
 risk:
-  risk_per_trade: 0.01     # fraction of equity risked per trade (to the stop)
+  risk_per_trade: 0.0075   # fraction of equity risked per trade (to the stop)
   atr_stop_mult: 1.5       # stop distance in ATRs (also used for sizing)
-  max_leverage: 3.0
+  max_leverage: 1.5
   max_positions: 2
   daily_max_loss: 0.05     # halt new entries after -5% on the day
 

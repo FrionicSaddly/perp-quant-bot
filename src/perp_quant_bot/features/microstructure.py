@@ -37,4 +37,7 @@ def microstructure_features(
             std_w = oi.rolling(w).std()
             feats[f"oi_z_{w}"] = (oi - mean_w) / std_w.replace(0.0, np.nan)
 
-    return pd.DataFrame(feats, index=index)
+    # Bars before funding/OI coverage (or rolling warmup) get a NEUTRAL 0 rather than
+    # NaN, so sparse perp data does not truncate the whole OHLCV history. 0 is a
+    # constant prior (no future info), so this stays leak-free.
+    return pd.DataFrame(feats, index=index).fillna(0.0)

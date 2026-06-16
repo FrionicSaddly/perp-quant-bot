@@ -39,10 +39,10 @@ def doctor() -> None:
 def download() -> None:
     """Download OHLCV (+ funding/OI) for the configured universe."""
     from .data import load_or_download_funding, load_or_download_ohlcv
-    from .data.exchange import make_exchange
+    from .data.exchange import make_data_exchange
 
     cfg = load_config()
-    ex = make_exchange(cfg)
+    ex = make_data_exchange(cfg)
     for s in cfg.universe.symbols:
         load_or_download_ohlcv(cfg, s, ex)
         load_or_download_funding(cfg, s, ex)
@@ -71,12 +71,12 @@ def backtest(symbol: str = typer.Option("", help="Specific symbol; empty = all")
 
     from .backtest import backtest_signal
     from .backtest.report import save_report
-    from .data.exchange import make_exchange
+    from .data.exchange import make_data_exchange
     from .models import LightGBMModel
     from .pipeline.train import model_path, prepare_dataset
 
     cfg = load_config()
-    ex = make_exchange(cfg)
+    ex = make_data_exchange(cfg)
     symbols = [symbol] if symbol else cfg.universe.symbols
     for s in symbols:
         p = model_path(cfg, s)

@@ -28,6 +28,7 @@ class UniverseCfg(BaseModel):
 class DataCfg(BaseModel):
     raw_dir: str = "data/raw"
     processed_dir: str = "data/processed"
+    exchange_id: str | None = None  # data source venue (mainnet, public); None = exchange.id
 
 
 class FeaturesCfg(BaseModel):
@@ -72,6 +73,8 @@ class BacktestCfg(BaseModel):
     apply_funding: bool = True
     initial_capital: float = 10000.0
     fill: str = "next_open"  # next_open (realistic) | close (optimistic approximation)
+    position_mode: str = "hold"  # hold = keep position through neutral (trade only on
+    #                              conviction flips, low turnover) | flip = act every bar
 
 
 class RiskCfg(BaseModel):
