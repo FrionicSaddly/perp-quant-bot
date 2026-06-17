@@ -51,8 +51,15 @@ def basis_carry_backtest(
     funding_smooth: int = 7,
     fee_rate: float | None = None,
     slippage_bps: float | None = None,
+    top_k: int | None = None,
 ) -> dict:
-    """Aligned [time x symbol] perp_close + spot_close + funding -> delta-neutral carry."""
+    """Aligned [time x symbol] perp_close + spot_close + funding -> delta-neutral carry.
+
+    ``top_k``: if set, hold only the K highest (smoothed prior) funding names each bar
+    (concentrate capital in the richest carry) instead of the whole positive-funding
+    basket. Leak-free (ranking uses shifted funding). Concentration lifts gross yield
+    but adds turnover as names rotate — the net/DSR comparison decides if it's worth it.
+    """
     common = perp_close.index.intersection(spot_close.index).intersection(funding.index)
     cols = perp_close.columns
     pc = perp_close.loc[common, cols]
@@ -66,11 +73,20 @@ def basis_carry_backtest(
     # Smoothing + FIXED per-symbol weight (no daily rescaling) keeps turnover low — the
     # decisive factor, since the funding edge is thin.
     f_signal = f.rolling(funding_smooth, min_periods=1).mean()
+    prior = f_signal.shift(1)
     if only_positive:
-        engage = (f_signal.shift(1) > 0).astype(float)
+        engage = (prior > 0).astype(float)
     else:
         engage = pd.DataFrame(1.0, index=common, columns=cols)
-    w = engage * (1.0 / max(len(cols), 1))  # fixed notional per symbol
+
+    if top_k is not None and top_k < len(cols):
+        # Keep only the top-K engaged names by prior smoothed funding each bar.
+        masked = prior.where(engage > 0)
+        keep = (masked.rank(axis=1, ascending=False, method="first") <= top_k).astype(float)
+        engage = engage * keep
+        w = engage * (1.0 / top_k)  # fixed 1/K notional; <K engaged -> some cash idle
+    else:
+        w = engage * (1.0 / max(len(cols), 1))  # fixed notional per symbol
 
     # per-symbol delta-neutral return over bar t: funding received (short perp) + basis drift
     per_sym = f.fillna(0.0) + (spot_ret - perp_ret).fillna(0.0)
@@ -108,6 +124,8 @@ def basis_carry_backtest(
 BINANCE_BASKET = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
     "SOLUSDT", "DOGEUSDT", "LTCUSDT", "LINKUSDT", "AVAXUSDT",
+    "DOTUSDT", "TRXUSDT", "BCHUSDT", "ATOMUSDT", "ETCUSDT",
+    "FILUSDT", "APTUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT",
 ]
 
 
@@ -196,6 +214,7 @@ def run_basis_carry(
     symbols: list[str] | None = None,
     venue: str = "mexc",
     source: str = "mexc",
+    top_k: int | None = None,
 ) -> dict:
     cfg = cfg or load_config()
     if source == "binance_vision":
@@ -212,7 +231,7 @@ def run_basis_carry(
     primary = None
     for bps in fee_levels_bps:
         r = basis_carry_backtest(
-            perp_close, spot_close, funding, cfg, fee_rate=bps / 1e4, slippage_bps=0.0
+            perp_close, spot_close, funding, cfg, fee_rate=bps / 1e4, slippage_bps=0.0, top_k=top_k
         )
         mm = r["metrics"]
         table.append({
@@ -243,7 +262,7 @@ def run_basis_carry(
     oos: dict[str, dict] = {}
     for lbl, sl in [("h1_in", slice(0, half)), ("h2_oos", slice(half, len(common)))]:
         rr = basis_carry_backtest(
-            pc2.iloc[sl], sc2.iloc[sl], f2.iloc[sl], cfg, fee_rate=0.0001, slippage_bps=0.0
+            pc2.iloc[sl], sc2.iloc[sl], f2.iloc[sl], cfg, fee_rate=0.0001, slippage_bps=0.0, top_k=top_k
         )
         oos[lbl] = {"sharpe": rr["metrics"]["sharpe"], "return": rr["metrics"]["total_return"]}
     primary["oos"] = oos
@@ -251,6 +270,38 @@ def run_basis_carry(
         "  OOS @maker1bp: H1(in) sharpe={:.2f} ret={:.1%} | H2(oos) sharpe={:.2f} ret={:.1%}",
         oos["h1_in"]["sharpe"], oos["h1_in"]["return"], oos["h2_oos"]["sharpe"], oos["h2_oos"]["return"],
     )
+
+    # Concentration sweep: full basket vs top-K richest-funding names (maker 1bp).
+    # Honest test of whether concentrating capital beats the diversified basket NET.
+    n_avail = len(perp_close.columns)
+    topk_table: list[dict] = []
+    for k in (None, 3, 5, 8):
+        if k is not None and k >= n_avail:
+            continue
+        rk = basis_carry_backtest(
+            perp_close, spot_close, funding, cfg, fee_rate=0.0001, slippage_bps=0.0, top_k=k
+        )
+        half2 = len(common) // 2
+        rk_oos = basis_carry_backtest(
+            pc2.iloc[half2:], sc2.iloc[half2:], f2.iloc[half2:], cfg,
+            fee_rate=0.0001, slippage_bps=0.0, top_k=k,
+        )
+        topk_table.append({
+            "top_k": k or n_avail,
+            "net_sharpe": rk["metrics"]["sharpe"],
+            "net_return": rk["metrics"]["total_return"],
+            "dsr": rk["metrics"]["deflated_sharpe"],
+            "turnover": rk["metrics"]["avg_turnover"],
+            "oos_sharpe": rk_oos["metrics"]["sharpe"],
+        })
+    primary["topk_table"] = topk_table
+    logger.info("  concentration (maker 1bp):")
+    for row in topk_table:
+        logger.info(
+            "    top_k={:>3} -> NET sharpe={:6.2f} ret={:7.1%} DSR={:.2f} turn={:.2f} | OOS-H2 sharpe={:6.2f}",
+            row["top_k"], row["net_sharpe"], row["net_return"], row["dsr"],
+            row["turnover"], row["oos_sharpe"],
+        )
 
     primary["data"] = {"perp_close": perp_close, "spot_close": spot_close, "funding": funding}
     return primary

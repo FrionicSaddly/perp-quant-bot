@@ -141,6 +141,28 @@ def test_basis_carry_backtest_runs():
     assert m["pct_engaged"] > 0.5  # funding mostly positive -> engaged most bars
 
 
+def test_basis_carry_top_k_concentrates():
+    """top_k holds only the K richest-funding names each bar (leak-safe ranking)."""
+    from perp_quant_bot.strategies.basis_carry import basis_carry_backtest
+
+    cfg = load_config()
+    rng = np.random.default_rng(3)
+    idx = pd.date_range("2024-01-01", periods=200, freq="1D", tz="UTC")
+    cols = [f"S{i}/USDT:USDT" for i in range(6)]
+    base = {c: 100.0 * np.exp(np.cumsum(rng.normal(0, 0.01, len(idx)))) for c in cols}
+    perp = pd.DataFrame(base, index=idx)
+    spot = pd.DataFrame({c: base[c] * (1 + rng.normal(0, 0.0003, len(idx))) for c in cols}, index=idx)
+    # distinct, constant positive funding: S0 richest ... S5 thinnest
+    funding = pd.DataFrame(
+        {c: np.full(len(idx), 0.0010 - 0.0001 * i) for i, c in enumerate(cols)}, index=idx
+    )
+    res = basis_carry_backtest(perp, spot, funding, cfg, top_k=2)
+    w = res["weights"]
+    assert int((w > 0).sum(axis=1).max()) <= 2  # never more than K names
+    held = w.iloc[-1] > 0
+    assert held["S0/USDT:USDT"] and held["S1/USDT:USDT"]  # the two richest
+
+
 def test_carry_plan_math_and_live_guard():
     """CarryPlan accounting is correct; execute_live refuses without confirm."""
     import pytest

@@ -192,11 +192,16 @@ def funding_now(venue: str = typer.Option("bybit", help="Exchange for the live f
 def basis(
     source: str = typer.Option("binance_vision", help="binance_vision (deep multi-year) | mexc"),
     venue: str = typer.Option("mexc", help="ccxt venue when source=mexc"),
+    top_k: int = typer.Option(0, help="Hold only the K richest-funding names (0 = full basket)"),
 ) -> None:
-    """Delta-neutral funding (basis) carry: long spot + short perp (validated)."""
+    """Delta-neutral funding (basis) carry: long spot + short perp (validated).
+
+    A concentration sweep is always printed; pass --top-k to make the headline run
+    use that concentration (top-8 historically lifts return ~5.7%->7%/yr at similar risk).
+    """
     from .strategies import run_basis_carry
 
-    res = run_basis_carry(venue=venue, source=source)
+    res = run_basis_carry(venue=venue, source=source, top_k=top_k if top_k > 0 else None)
     m = res["metrics"]
     typer.echo(
         f"basis-carry ({m['n_symbols']} names, daily): GROSS sharpe={m['gross_sharpe']:.2f} "
