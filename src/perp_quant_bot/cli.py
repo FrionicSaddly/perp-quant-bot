@@ -178,17 +178,17 @@ def basis(venue: str = typer.Option("mexc", help="Venue with spot + perp + fundi
     res = run_basis_carry(venue=venue)
     m = res["metrics"]
     typer.echo(
-        f"basis-carry ({m['n_symbols']} names):  NET sharpe={m['sharpe']:.2f} ret={m['total_return']:.1%}"
+        f"basis-carry ({m['n_symbols']} names, daily): GROSS sharpe={m['gross_sharpe']:.2f} "
+        f"ret={m['gross_total_return']:.1%} (funding {m['funding_total_return']:.1%}) | "
+        f"turnover/bar={m['avg_turnover']:.2f}"
     )
-    typer.echo(
-        f"  GROSS (pre-cost) sharpe={m.get('gross_sharpe', float('nan')):.2f} "
-        f"ret={m.get('gross_total_return', float('nan')):.1%} | "
-        f"funding-only ret={m.get('funding_total_return', float('nan')):.1%}"
-    )
-    typer.echo(
-        f"  turnover/bar={m.get('avg_turnover', 0.0):.2f} engaged={m.get('pct_engaged', float('nan')):.0%}"
-        f"  -> thin edge: needs maker fees + low turnover"
-    )
+    typer.echo("  net by fee (per side):")
+    for row in res.get("fee_table", []):
+        typer.echo(
+            f"    {row['fee_bps']:>4.1f} bp -> sharpe={row['net_sharpe']:6.2f} "
+            f"ret={row['net_return']:7.1%} PSR={row['psr']:.2f} DSR={row['dsr']:.2f}"
+        )
+    typer.echo("  (0bp=gross; 1-2bp~maker [how basis-arb is run]; 5.5bp=taker)")
 
 
 @app.command()

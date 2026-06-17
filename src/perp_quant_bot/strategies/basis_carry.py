@@ -48,6 +48,8 @@ def basis_carry_backtest(
     cfg: Config,
     only_positive: bool = True,
     funding_smooth: int = 7,
+    fee_rate: float | None = None,
+    slippage_bps: float | None = None,
 ) -> dict:
     """Aligned [time x symbol] perp_close + spot_close + funding -> delta-neutral carry."""
     common = perp_close.index.intersection(spot_close.index).intersection(funding.index)
@@ -74,7 +76,9 @@ def basis_carry_backtest(
     gross = (w * per_sym).sum(axis=1)
 
     turnover = (w - w.shift(1).fillna(0.0)).abs().sum(axis=1) * 2.0  # two legs (spot + perp)
-    cost_rate = cfg.backtest.fee_rate + cfg.backtest.slippage_bps / 1e4
+    fr = cfg.backtest.fee_rate if fee_rate is None else fee_rate
+    sl = cfg.backtest.slippage_bps if slippage_bps is None else slippage_bps
+    cost_rate = fr + sl / 1e4
     net = gross - turnover * cost_rate
 
     active = w.abs().sum(axis=1) > 0
@@ -148,14 +152,34 @@ def run_basis_carry(
     spot_close = _mat(spot_closes)
     funding = _mat(fundings)
 
-    res = basis_carry_backtest(perp_close, spot_close, funding, cfg)
-    m = res["metrics"]
+    # Fee-sensitivity: 0 = gross, 1-2bp ~ maker (how basis-arb is actually executed),
+    # 5.5bp = taker. Shows exactly where the (thin) edge survives.
+    fee_levels_bps = [0.0, 1.0, 2.0, 5.5]
+    table: list[dict] = []
+    primary = None
+    for bps in fee_levels_bps:
+        r = basis_carry_backtest(
+            perp_close, spot_close, funding, cfg, fee_rate=bps / 1e4, slippage_bps=0.0
+        )
+        mm = r["metrics"]
+        table.append({
+            "fee_bps": bps, "net_sharpe": mm["sharpe"], "net_return": mm["total_return"],
+            "psr": mm["psr"], "dsr": mm["deflated_sharpe"],
+        })
+        if bps == 2.0:
+            primary = r
+    primary = primary or r
+    m = primary["metrics"]
     logger.info(
-        "basis-carry ({} names, {} bars @ {}): NET sharpe={:.2f} ret={:.1%} | "
-        "GROSS sharpe={:.2f} ret={:.1%} | funding-only ret={:.1%} | turnover/bar={:.2f} engaged={:.0%}",
-        m["n_symbols"], len(res["net"]), venue, m["sharpe"], m["total_return"],
-        m.get("gross_sharpe", float("nan")), m.get("gross_total_return", float("nan")),
-        m.get("funding_total_return", float("nan")), m.get("avg_turnover", 0.0),
-        m.get("pct_engaged", float("nan")),
+        "basis-carry ({} names, {} daily bars @ {}): GROSS sharpe={:.2f} ret={:.1%} "
+        "(funding {:.1%}) | turnover/bar={:.2f} engaged={:.0%}",
+        m["n_symbols"], len(primary["net"]), venue, m["gross_sharpe"], m["gross_total_return"],
+        m["funding_total_return"], m["avg_turnover"], m["pct_engaged"],
     )
-    return res
+    for row in table:
+        logger.info(
+            "  fee={:>4.1f}bp/side -> NET sharpe={:6.2f} ret={:7.1%} PSR={:.2f} DSR={:.2f}",
+            row["fee_bps"], row["net_sharpe"], row["net_return"], row["psr"], row["dsr"],
+        )
+    primary["fee_table"] = table
+    return primary
