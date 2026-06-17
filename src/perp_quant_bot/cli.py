@@ -270,6 +270,24 @@ def xfunding(
 
 
 @app.command()
+def pairs() -> None:
+    """Statistical-arbitrage pairs: market-neutral mean reversion of beta-hedged spreads."""
+    from .strategies import run_pairs
+
+    res = run_pairs()
+    m = res["metrics"]
+    typer.echo(
+        f"pairs stat-arb ({m['n_pairs']} pairs): GROSS sharpe={m['gross_sharpe']:.2f} "
+        f"ret={m['gross_total_return']:.1%} | turnover/bar={m['avg_turnover']:.2f}"
+    )
+    for row in res.get("fee_table", []):
+        typer.echo(
+            f"    {row['fee_bps']:>4.1f} bp -> sharpe={row['net_sharpe']:6.2f} "
+            f"ret={row['net_return']:7.1%} PSR={row['psr']:.2f} DSR={row['dsr']:.2f}"
+        )
+
+
+@app.command()
 def cpcv(
     symbol: str = typer.Argument(..., help="e.g. ETH/USDT:USDT"),
     n_groups: int = typer.Option(6, help="time blocks"),

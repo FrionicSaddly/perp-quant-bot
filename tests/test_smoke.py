@@ -141,6 +141,27 @@ def test_basis_carry_backtest_runs():
     assert m["pct_engaged"] > 0.5  # funding mostly positive -> engaged most bars
 
 
+def test_pairs_stat_arb_backtest():
+    """A cointegrated pair (mean-reverting spread) is captured gross by the fader."""
+    from perp_quant_bot.strategies.pairs import pairs_stat_arb_backtest
+
+    cfg = load_config()
+    rng = np.random.default_rng(11)
+    idx = pd.date_range("2023-01-01", periods=600, freq="1D", tz="UTC")
+    common = np.cumsum(rng.normal(0, 0.01, len(idx)))  # shared trend
+    p1 = pd.Series(100.0 * np.exp(common + rng.normal(0, 0.005, len(idx))), index=idx)
+    # p2 tracks p1 with a STATIONARY (mean-reverting) spread -> cointegrated
+    ms = np.zeros(len(idx))
+    for t in range(1, len(idx)):
+        ms[t] = 0.9 * ms[t - 1] + rng.normal(0, 0.01)  # AR(1) mean-reverting
+    p2 = pd.Series(100.0 * np.exp(common + ms), index=idx)
+    prices = pd.DataFrame({"P1USDT": p1, "P2USDT": p2})
+    r = pairs_stat_arb_backtest(prices, cfg, lookback=40, fee_rate=0.0, slippage_bps=0.0)
+    m = r["metrics"]
+    assert m["n_pairs"] == 1
+    assert m["gross_total_return"] > 0  # mean-reverting spread, zero cost -> captured
+
+
 def test_cross_exchange_funding_backtest():
     """A persistent positive A-minus-B spread is collected (gross positive, delta-neutral)."""
     from perp_quant_bot.strategies.cross_exchange import cross_exchange_funding_backtest

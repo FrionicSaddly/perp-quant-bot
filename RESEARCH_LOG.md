@@ -97,6 +97,20 @@ overfitting` (CSCV) quantifies overfitting. `pqb cpcv` demo on ETH 1h directiona
 15 paths -> mean Sharpe -0.25, median -0.36, only 40% of paths >0 -> the "no edge"
 verdict is robust to path choice, not a single unlucky split.
 
+**Pairs stat-arb (10 major perps, daily).** Beta-hedged mean reversion of the
+spread, z-score entry/exit, 45 pairs equal-weighted, trailing-only. Honest result
+over ~5.8y: GROSS Sharpe 0.02, return -1.6%, DSR ~0.08 — no edge even before costs.
+Major crypto perps don't cointegrate stably (spreads trend, don't revert).
+**Verdict: no edge.** (`pqb pairs`.)
+
+### Edge-hunt tally (what actually works)
+Tested families — directional ML, meta-labeling, microstructure direction,
+cross-sectional momentum, perp-only funding carry, cross-exchange funding spread,
+pairs stat-arb: **all DSR ~ 0 (no robust edge).** The single validated edge is the
+**delta-neutral basis carry** (`pqb basis`), improvable via top-K concentration
+(~7%/yr) and prudent leverage (the `pqb basis` leverage sweep). Honest conclusion:
+the money is in exploiting + sizing the carry, not in finding a directional miracle.
+
 **Cross-exchange funding spread (Bybit vs OKX).** Short the higher-funding venue,
 long the lower (same perp) to collect the differential — delta-neutral, no spot.
 Honest result (~3 months, the venues cap funding history): GROSS return ~**0.1%**
