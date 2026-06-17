@@ -15,6 +15,7 @@ from __future__ import annotations
 import time
 
 import ccxt
+import httpx
 import numpy as np
 import pandas as pd
 
@@ -104,14 +105,19 @@ def basis_carry_backtest(
     return {"metrics": metrics, "equity": equity, "weights": w, "net": net}
 
 
-def run_basis_carry(
-    cfg: Config | None = None,
-    symbols: list[str] | None = None,
-    venue: str = "mexc",
-) -> dict:
-    cfg = cfg or load_config()
-    symbols = symbols or BASKET
+BINANCE_BASKET = [
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT",
+    "SOLUSDT", "DOGEUSDT", "LTCUSDT", "LINKUSDT", "AVAXUSDT",
+]
 
+
+def _mat_daily(d: dict) -> pd.DataFrame:
+    m = pd.DataFrame(d)
+    m.index = m.index.floor("1D")
+    return m[~m.index.duplicated(keep="last")].sort_index()
+
+
+def _load_ccxt(cfg: Config, symbols: list[str], venue: str):
     perp_ex = getattr(ccxt, venue)(
         {"enableRateLimit": True, "timeout": 30000, "options": {"defaultType": "swap"}}
     )
@@ -119,15 +125,11 @@ def run_basis_carry(
         {"enableRateLimit": True, "timeout": 30000, "options": {"defaultType": "spot"}}
     )
     since = perp_ex.parse8601(cfg.universe.since)
-
-    perp_closes: dict[str, pd.Series] = {}
-    spot_closes: dict[str, pd.Series] = {}
-    fundings: dict[str, pd.Series] = {}
+    perp_closes, spot_closes, fundings = {}, {}, {}
     for s in symbols:
         try:
             pdf = download_ohlcv(perp_ex, s, "1d", since)
             sdf = download_ohlcv(spot_ex, _spot_symbol(s), "1d", since)
-            # funding posts every 8h; sum to a daily total (what a short perp collects/day)
             fser = _funding_series(perp_ex, s, since).resample("1D").sum()
         except Exception as exc:  # noqa: BLE001
             logger.warning("basis-carry: skipping {} ({})", s, str(exc).splitlines()[0][:70])
@@ -139,18 +141,69 @@ def run_basis_carry(
         spot_closes[s] = sdf["close"]
         fundings[s] = fser
         time.sleep(0.2)
-
     if len(perp_closes) < 4:
         raise RuntimeError(f"Only {len(perp_closes)} symbols had spot+perp+funding; need >= 4")
+    return _mat_daily(perp_closes), _mat_daily(spot_closes), _mat_daily(fundings)
 
-    def _mat(d: dict) -> pd.DataFrame:
-        m = pd.DataFrame(d)
-        m.index = m.index.floor("1D")
-        return m[~m.index.duplicated(keep="last")].sort_index()
 
-    perp_close = _mat(perp_closes)
-    spot_close = _mat(spot_closes)
-    funding = _mat(fundings)
+def _load_binance_vision(cfg: Config, symbols: list[str]):
+    from ..data import binance_vision as bv
+
+    since = pd.Timestamp(cfg.universe.since, tz="UTC")
+    until = pd.Timestamp.now(tz="UTC")
+    cache = cfg.raw_dir() / "binvision"
+    cache.mkdir(parents=True, exist_ok=True)
+    perp_closes, spot_closes, fundings = {}, {}, {}
+    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+        for sym in symbols:
+            px_path = cache / f"{sym}_px.parquet"
+            f_path = cache / f"{sym}_funding.parquet"
+            try:
+                if px_path.exists() and f_path.exists():
+                    px = pd.read_parquet(px_path)
+                    fser = pd.read_parquet(f_path)["funding"]
+                else:
+                    perp = bv.klines_close("um", sym, "1d", since, until, client)
+                    spot = bv.klines_close("spot", sym, "1d", since, until, client)
+                    fser = bv.funding_history(sym, since, until, client)
+                    if perp.empty or spot.empty or fser.empty:
+                        logger.warning("basis-carry(bv): skipping {} (missing data)", sym)
+                        continue
+                    px = pd.DataFrame({"perp": perp, "spot": spot})
+                    px.to_parquet(px_path)
+                    fser.to_frame("funding").to_parquet(f_path)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("basis-carry(bv): skipping {} ({})", sym, str(exc)[:70])
+                continue
+            if px.empty or fser.empty or min(len(px), len(fser)) < 150:
+                logger.warning("basis-carry(bv): skipping {} (insufficient data)", sym)
+                continue
+            perp_closes[sym] = px["perp"]
+            spot_closes[sym] = px["spot"]
+            fundings[sym] = fser
+    if len(perp_closes) < 4:
+        raise RuntimeError(f"Only {len(perp_closes)} symbols loaded from binance_vision; need >= 4")
+    perp_close = _mat_daily(perp_closes)
+    spot_close = _mat_daily(spot_closes)
+    funding = pd.DataFrame(fundings).sort_index().resample("1D").sum()
+    funding.index = funding.index.floor("1D")
+    funding = funding[~funding.index.duplicated(keep="last")]
+    return perp_close, spot_close, funding
+
+
+def run_basis_carry(
+    cfg: Config | None = None,
+    symbols: list[str] | None = None,
+    venue: str = "mexc",
+    source: str = "mexc",
+) -> dict:
+    cfg = cfg or load_config()
+    if source == "binance_vision":
+        perp_close, spot_close, funding = _load_binance_vision(cfg, symbols or BINANCE_BASKET)
+        label = "binance_vision"
+    else:
+        perp_close, spot_close, funding = _load_ccxt(cfg, symbols or BASKET, venue)
+        label = venue
 
     # Fee-sensitivity: 0 = gross, 1-2bp ~ maker (how basis-arb is actually executed),
     # 5.5bp = taker. Shows exactly where the (thin) edge survives.
@@ -173,7 +226,7 @@ def run_basis_carry(
     logger.info(
         "basis-carry ({} names, {} daily bars @ {}): GROSS sharpe={:.2f} ret={:.1%} "
         "(funding {:.1%}) | turnover/bar={:.2f} engaged={:.0%}",
-        m["n_symbols"], len(primary["net"]), venue, m["gross_sharpe"], m["gross_total_return"],
+        m["n_symbols"], len(primary["net"]), label, m["gross_sharpe"], m["gross_total_return"],
         m["funding_total_return"], m["avg_turnover"], m["pct_engaged"],
     )
     for row in table:

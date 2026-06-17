@@ -171,11 +171,14 @@ def carry(
 
 
 @app.command()
-def basis(venue: str = typer.Option("mexc", help="Venue with spot + perp + funding")) -> None:
+def basis(
+    source: str = typer.Option("binance_vision", help="binance_vision (deep multi-year) | mexc"),
+    venue: str = typer.Option("mexc", help="ccxt venue when source=mexc"),
+) -> None:
     """Delta-neutral funding (basis) carry: long spot + short perp (validated)."""
     from .strategies import run_basis_carry
 
-    res = run_basis_carry(venue=venue)
+    res = run_basis_carry(venue=venue, source=source)
     m = res["metrics"]
     typer.echo(
         f"basis-carry ({m['n_symbols']} names, daily): GROSS sharpe={m['gross_sharpe']:.2f} "

@@ -1,0 +1,95 @@
+"""Loader for Binance public data dumps (data.binance.vision).
+
+This static CDN serves multi-year history of funding rates and spot/perp klines as
+monthly CSV zips. It is reachable even where the Binance trading API is geo-blocked,
+so it is our source of DEEP funding history for a robust basis-carry backtest.
+
+Monthly files are fetched concurrently (the CDN is the latency bottleneck).
+Symbols are raw Binance tickers, e.g. "BTCUSDT".
+"""
+from __future__ import annotations
+
+import io
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
+
+import httpx
+import pandas as pd
+
+from ..logging_conf import setup_logging
+
+logger = setup_logging()
+
+BASE = "https://data.binance.vision/data"
+
+
+def _months(since: pd.Timestamp, until: pd.Timestamp):
+    cur = (since if since.tzinfo else since.tz_localize("UTC")).to_period("M")
+    end = (until if until.tzinfo else until.tz_localize("UTC")).to_period("M")
+    while cur <= end:
+        yield f"{cur.year:04d}-{cur.month:02d}"
+        cur += 1
+
+
+def _get_zip_csv(url: str, client: httpx.Client) -> str | None:
+    try:
+        r = client.get(url)
+    except Exception:  # noqa: BLE001
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        return z.read(z.namelist()[0]).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fetch_all(urls: list[str], client: httpx.Client, workers: int = 12) -> list[str | None]:
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(lambda u: _get_zip_csv(u, client), urls))
+
+
+def funding_history(symbol: str, since, until, client: httpx.Client) -> pd.Series:
+    """8h funding-rate series for a UM perp symbol (e.g. 'BTCUSDT')."""
+    months = list(_months(pd.Timestamp(since), pd.Timestamp(until)))
+    urls = [f"{BASE}/futures/um/monthly/fundingRate/{symbol}/{symbol}-fundingRate-{ym}.zip" for ym in months]
+    frames = []
+    for txt in _fetch_all(urls, client):
+        if not txt:
+            continue
+        df = pd.read_csv(io.StringIO(txt))
+        if "calc_time" in df.columns and "last_funding_rate" in df.columns:
+            frames.append(
+                df[["calc_time", "last_funding_rate"]].rename(
+                    columns={"calc_time": "t", "last_funding_rate": "f"}
+                )
+            )
+    if not frames:
+        return pd.Series(dtype=float)
+    d = pd.concat(frames, ignore_index=True).dropna()
+    idx = pd.to_datetime(d["t"].astype("int64"), unit="ms", utc=True)
+    return pd.Series(d["f"].astype(float).to_numpy(), index=idx).sort_index()
+
+
+def klines_close(market: str, symbol: str, interval: str, since, until, client: httpx.Client) -> pd.Series:
+    """Close-price series. market='um' (perp) or 'spot'."""
+    seg = "futures/um" if market == "um" else "spot"
+    months = list(_months(pd.Timestamp(since), pd.Timestamp(until)))
+    urls = [f"{BASE}/{seg}/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{ym}.zip" for ym in months]
+    frames = []
+    for txt in _fetch_all(urls, client):
+        if not txt:
+            continue
+        has_header = txt.splitlines()[0].lower().startswith("open_time")
+        df = pd.read_csv(io.StringIO(txt), header=0 if has_header else None)
+        if has_header:
+            ot, cl = df["open_time"], df["close"]
+        else:
+            ot, cl = df.iloc[:, 0], df.iloc[:, 4]
+        frames.append(pd.DataFrame({"t": ot, "c": cl}))
+    if not frames:
+        return pd.Series(dtype=float)
+    d = pd.concat(frames, ignore_index=True).dropna()
+    idx = pd.to_datetime(d["t"].astype("int64"), unit="ms", utc=True)
+    return pd.Series(d["c"].astype(float).to_numpy(), index=idx).sort_index()
