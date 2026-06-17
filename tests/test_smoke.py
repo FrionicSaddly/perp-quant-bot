@@ -217,6 +217,30 @@ def test_basis_carry_top_k_concentrates():
     assert held["S0/USDT:USDT"] and held["S1/USDT:USDT"]  # the two richest
 
 
+def test_carry_reconcile_idempotent_and_exits():
+    """Reconcile = minimal orders to target; no-op at target; closes dropped symbols."""
+    from perp_quant_bot.execution.carry_executor import CarryLeg, CarryPlan, reconcile_orders
+
+    leg = CarryLeg("BTC/USDT:USDT", "BTC/USDT", 0.0001, 100.0, 100.0, 100.0, 1.0, 1.0, 50.0, 0.03)
+    plan = CarryPlan("bybit", 150.0, 2.0, 0.0002, [leg])
+
+    # flat -> enter both legs (buy spot, short perp)
+    o = reconcile_orders(plan, {}, {})
+    spot = [x for x in o if x.market == "spot"][0]
+    perp = [x for x in o if x.market == "perp"][0]
+    assert spot.side == "buy" and abs(spot.amount - 1.0) < 1e-9
+    assert perp.side == "sell" and abs(perp.amount - 1.0) < 1e-9
+
+    # already at target -> no orders
+    assert reconcile_orders(plan, {"BTC": 1.0}, {"BTC/USDT:USDT": -1.0}) == []
+
+    # a dropped symbol (funding flipped) -> close both legs
+    o2 = reconcile_orders(plan, {"BTC": 1.0, "ETH": 2.0}, {"BTC/USDT:USDT": -1.0, "ETH/USDT:USDT": -2.0})
+    exits = [x for x in o2 if x.reason == "exit"]
+    assert any(x.market == "perp" and x.symbol == "ETH/USDT:USDT" and x.side == "buy" for x in exits)
+    assert any(x.market == "spot" and x.symbol == "ETH/USDT" and x.side == "sell" for x in exits)
+
+
 def test_carry_plan_math_and_live_guard():
     """CarryPlan accounting is correct; execute_live refuses without confirm."""
     import pytest

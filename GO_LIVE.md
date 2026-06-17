@@ -48,4 +48,35 @@ Read this before risking real money. It is deliberately blunt.
 4. Tiny live size; watch fills, funding accrual, margin for several days.
 5. Scale only if it behaves as expected. Keep a kill-switch and daily-loss limit.
 
+## Running the carry on Bybit (`pqb carry-trade`)
+
+The executor is **delta-neutral** (LONG spot + SHORT perp), **reconciles** to a target
+book (idempotent — safe to re-run; it trades only the delta), keeps a **margin buffer**
+idle, **caps leverage at 5x**, and **exits a leg when its funding flips negative**.
+
+```
+# 1) DRY-RUN (default): prints the target book + exact reconcile orders, no keys needed
+pqb carry-trade --capital 200 --leverage 2 --top-n 5
+
+# 2) LIVE, tiny, once (needs Bybit keys in .env):
+pqb carry-trade --capital 200 --leverage 2 --margin-buffer 0.25 --live --yes
+
+# 3) LIVE loop (rebalance every hour), maker orders to cut fees:
+pqb carry-trade --capital 200 --leverage 2 --maker --interval 3600 --live --yes
+```
+
+Knobs: `--capital` (USDT), `--leverage` (≤5), `--margin-buffer` (idle fraction, default
+0.25), `--top-n` (richest-funding names), `--min-funding` (engage threshold),
+`--maker` (post-only limits — cheaper, but fills aren't guaranteed → brief leg risk).
+
+**Bybit-specific cautions:**
+- The Bybit **spot** endpoint is intermittently geo-blocked from some networks (we hit
+  403s). The carry NEEDS the spot leg — run the live loop on a **reliable host** (cloud
+  VM / where Bybit is fully reachable), not a flaky connection.
+- Use a **Unified Trading Account** so spot + linear perp share margin (cleaner hedge).
+- Market orders guarantee the hedge fills together; `--maker` saves fees but can leave
+  one leg unfilled — only use it if you monitor and accept brief delta.
+- Start at the **smallest size**, confirm funding actually accrues and margin is safe
+  for several days, then scale. Leverage multiplies funding-flip and liquidation risk.
+
 **Not financial advice. You own the risk. Crypto leverage can lose your capital.**

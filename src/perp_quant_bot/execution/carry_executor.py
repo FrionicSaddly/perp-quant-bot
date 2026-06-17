@@ -160,6 +160,189 @@ def render_plan(plan: CarryPlan) -> str:
     return "\n".join(lines)
 
 
+@dataclass
+class CarryOrder:
+    market: str   # "spot" | "perp"
+    symbol: str
+    side: str     # "buy" | "sell"
+    amount: float  # base units, positive
+    price: float
+    reason: str   # "enter" | "adjust" | "exit"
+
+
+def reconcile_orders(
+    plan: CarryPlan,
+    spot_balances: dict[str, float],
+    perp_positions: dict[str, float],
+    min_notional: float = 5.0,
+) -> list[CarryOrder]:
+    """Diff target book vs current holdings -> the minimal orders to reach target.
+
+    Idempotent: re-running when already at target yields no orders. Symbols that
+    dropped out of the target (funding flipped negative) are CLOSED on both legs.
+    Pure function -> unit-testable without any exchange.
+    """
+    orders: list[CarryOrder] = []
+    target_perp = {leg.perp_symbol for leg in plan.legs}
+    target_bases = {leg.spot_symbol.split("/")[0] for leg in plan.legs}
+
+    for leg in plan.legs:
+        base = leg.spot_symbol.split("/")[0]
+        d_spot = leg.spot_amount - float(spot_balances.get(base, 0.0))  # target long - held
+        if abs(d_spot) * leg.spot_price >= min_notional:
+            orders.append(CarryOrder("spot", leg.spot_symbol, "buy" if d_spot > 0 else "sell",
+                                     abs(d_spot), leg.spot_price, "enter" if base not in spot_balances else "adjust"))
+        target_signed = -leg.perp_amount  # short the perp
+        d_perp = target_signed - float(perp_positions.get(leg.perp_symbol, 0.0))
+        if abs(d_perp) * leg.perp_price >= min_notional:
+            orders.append(CarryOrder("perp", leg.perp_symbol, "buy" if d_perp > 0 else "sell",
+                                     abs(d_perp), leg.perp_price, "enter" if leg.perp_symbol not in perp_positions else "adjust"))
+
+    # Exits: positions/holdings no longer in the target -> flatten (funding flipped).
+    for sym, pos in perp_positions.items():
+        if sym not in target_perp and abs(pos) > 0:
+            orders.append(CarryOrder("perp", sym, "buy" if pos < 0 else "sell", abs(pos), 0.0, "exit"))
+    for base, amt in spot_balances.items():
+        if base not in target_bases and base not in ("USDT", "USDC") and amt > 0:
+            orders.append(CarryOrder("spot", f"{base}/USDT", "sell", amt, 0.0, "exit"))
+    return orders
+
+
+def render_orders(orders: list[CarryOrder]) -> str:
+    if not orders:
+        return "  reconciled: already at target, no orders."
+    return "\n".join(
+        f"  [{o.reason:<6}] {o.side.upper():<4} {o.market:<4} {o.amount:.6f} {o.symbol}"
+        for o in orders
+    )
+
+
+def execute_orders(orders, perp, spot, *, maker: bool = False) -> list[dict]:
+    """Place reconciled orders. Default market (guarantees the hedge fills together);
+    maker=True posts limit orders at touch (cheaper, but fills aren't guaranteed ->
+    transient single-leg delta risk)."""
+    fills = []
+    for o in orders:
+        ex = spot if o.market == "spot" else perp
+        try:
+            amt = float(ex.amount_to_precision(o.symbol, o.amount))
+            if amt <= 0:
+                continue
+            if maker and o.price > 0:
+                px = float(ex.price_to_precision(o.symbol, o.price))
+                f = ex.create_order(o.symbol, "limit", o.side, amt, px, {"postOnly": True})
+            else:
+                f = ex.create_order(o.symbol, "market", o.side, amt)
+            logger.warning("LIVE {} {} {} {} -> {}", o.reason, o.side, amt, o.symbol, f.get("id", "?"))
+            fills.append({"symbol": o.symbol, "market": o.market, "id": f.get("id")})
+        except Exception as exc:  # noqa: BLE001
+            logger.error("order failed {} {}: {}", o.side, o.symbol, exc)
+            fills.append({"symbol": o.symbol, "error": str(exc)})
+    return fills
+
+
+def _keyed(venue, key, sec, market):
+    opts = {"defaultType": "swap", "fetchMarkets": ["linear"]} if market == "perp" else {"defaultType": "spot"}
+    ex = getattr(ccxt, venue)({"apiKey": key, "secret": sec, "enableRateLimit": True, "timeout": 20000, "options": opts})
+    for i in range(5):
+        try:
+            ex.load_markets()
+            return ex
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("{} load_markets retry {}: {}", venue, i + 1, str(exc).splitlines()[0][:70])
+            __import__("time").sleep(2 * (i + 1))
+    return ex
+
+
+def fetch_current_book(perp, spot, plan: CarryPlan):
+    """Current signed perp positions + spot base balances for the plan's symbols."""
+    spot_bal: dict[str, float] = {}
+    perp_pos: dict[str, float] = {}
+    try:
+        bal = spot.fetch_balance()
+        for leg in plan.legs:
+            base = leg.spot_symbol.split("/")[0]
+            spot_bal[base] = float((bal.get(base) or {}).get("free") or 0.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("fetch_balance failed: {}", exc)
+    try:
+        for p in perp.fetch_positions([leg.perp_symbol for leg in plan.legs]):
+            c = p.get("contracts")
+            if c:
+                perp_pos[p["symbol"]] = float(c) if p.get("side") == "long" else -float(c)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("fetch_positions failed: {}", exc)
+    return spot_bal, perp_pos
+
+
+def carry_step(
+    venue: str = "bybit",
+    capital: float = 200.0,
+    top_n: int = 5,
+    leverage: float = 2.0,
+    min_funding: float = 0.00005,
+    margin_buffer: float = 0.25,
+    maker: bool = False,
+    live: bool = False,
+    confirm: bool = False,
+) -> dict:
+    """One rebalance cycle: plan target -> reconcile vs current -> (optionally) execute.
+
+    Safe by default: live execution requires live=True AND confirm=True AND keys.
+    ``margin_buffer`` keeps part of capital idle so a funding/price wobble can't
+    trigger liquidation; ``leverage`` is capped for safety.
+    """
+    leverage = max(1.0, min(float(leverage), 5.0))  # hard cap
+    deployable = capital * (1.0 - max(0.0, min(margin_buffer, 0.9)))
+    plan = plan_carry(venue=venue, capital=deployable, top_n=top_n, min_funding=min_funding,
+                      leverage=leverage, fee_rate=0.0002 if maker else 0.00055)
+
+    perp = spot = None
+    spot_bal: dict[str, float] = {}
+    perp_pos: dict[str, float] = {}
+    if live:
+        from ..config import load_secrets
+        secrets = load_secrets()
+        key = getattr(secrets, "bybit_api_key", None)
+        sec = getattr(secrets, "bybit_api_secret", None)
+        if not key or not sec:
+            raise RuntimeError("No Bybit API keys in .env — cannot trade live.")
+        perp, spot = _keyed(venue, key, sec, "perp"), _keyed(venue, key, sec, "spot")
+        spot_bal, perp_pos = fetch_current_book(perp, spot, plan)
+
+    orders = reconcile_orders(plan, spot_bal, perp_pos)
+    logger.info(render_plan(plan))
+    logger.info("reconcile ({} current spot, {} current perp):", len(spot_bal), len(perp_pos))
+    logger.info(render_orders(orders))
+
+    fills = []
+    if live and confirm and orders:
+        for leg in plan.legs:
+            try:
+                perp.set_leverage(leverage, leg.perp_symbol)
+            except Exception:  # noqa: BLE001
+                pass
+        fills = execute_orders(orders, perp, spot, maker=maker)
+    elif not live:
+        logger.info("[dry-run] {} orders computed; add --live --yes (+keys) to execute.", len(orders))
+    elif not confirm:
+        logger.info("[blocked] --live needs --yes; refusing real orders.")
+    return {"plan": plan, "orders": orders, "fills": fills}
+
+
+def run_carry(interval: float = 0.0, **kwargs) -> None:
+    """Run one carry_step, or loop every ``interval`` seconds (0 = once)."""
+    import time as _t
+    while True:
+        try:
+            carry_step(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("carry step failed: {}", exc)
+        if interval <= 0:
+            break
+        _t.sleep(interval)
+
+
 def execute_live(plan: CarryPlan, *, confirm: bool = False) -> list[dict]:
     """Place the two-leg book for real. Requires keys + confirm=True.
 
