@@ -171,6 +171,27 @@ def carry(
 
 
 @app.command()
+def basis(venue: str = typer.Option("mexc", help="Venue with spot + perp + funding")) -> None:
+    """Delta-neutral funding (basis) carry: long spot + short perp (validated)."""
+    from .strategies import run_basis_carry
+
+    res = run_basis_carry(venue=venue)
+    m = res["metrics"]
+    typer.echo(
+        f"basis-carry ({m['n_symbols']} names):  NET sharpe={m['sharpe']:.2f} ret={m['total_return']:.1%}"
+    )
+    typer.echo(
+        f"  GROSS (pre-cost) sharpe={m.get('gross_sharpe', float('nan')):.2f} "
+        f"ret={m.get('gross_total_return', float('nan')):.1%} | "
+        f"funding-only ret={m.get('funding_total_return', float('nan')):.1%}"
+    )
+    typer.echo(
+        f"  turnover/bar={m.get('avg_turnover', 0.0):.2f} engaged={m.get('pct_engaged', float('nan')):.0%}"
+        f"  -> thin edge: needs maker fees + low turnover"
+    )
+
+
+@app.command()
 def newslog(
     once: bool = typer.Option(False, help="Single poll then exit"),
     interval: int = typer.Option(90, help="Seconds between polls"),

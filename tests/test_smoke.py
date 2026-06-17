@@ -116,6 +116,31 @@ def test_funding_carry_backtest_is_market_neutral():
     assert float(res["weights"].sum(axis=1).abs().max()) < 1e-9  # market-neutral
 
 
+def test_basis_carry_backtest_runs():
+    from perp_quant_bot.strategies.basis_carry import basis_carry_backtest
+
+    cfg = load_config()
+    rng = np.random.default_rng(7)
+    idx = pd.date_range("2024-01-01", periods=400, freq="8h", tz="UTC")
+    cols = [f"S{i}/USDT:USDT" for i in range(6)]
+    base = {c: 100.0 * np.exp(np.cumsum(rng.normal(0, 0.02, len(idx)))) for c in cols}
+    perp = pd.DataFrame(base, index=idx)
+    # spot tracks perp closely (small basis noise)
+    spot = pd.DataFrame(
+        {c: base[c] * (1 + rng.normal(0, 0.0005, len(idx))) for c in cols}, index=idx
+    )
+    # funding mostly positive
+    funding = pd.DataFrame(
+        {c: np.abs(rng.normal(0.0002, 0.0003, len(idx))) for c in cols}, index=idx
+    )
+    res = basis_carry_backtest(perp, spot, funding, cfg)
+    m = res["metrics"]
+    for k in ("sharpe", "psr", "deflated_sharpe", "n_symbols", "pct_engaged"):
+        assert k in m
+    assert m["n_symbols"] == 6
+    assert m["pct_engaged"] > 0.5  # funding mostly positive -> engaged most bars
+
+
 def test_paper_broker_fills():
     b = PaperBroker(initial_cash=10_000.0, fee_rate=0.0)
     b.update_price("BTC/USDT:USDT", 100.0)
