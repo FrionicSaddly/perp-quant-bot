@@ -141,6 +141,23 @@ def test_basis_carry_backtest_runs():
     assert m["pct_engaged"] > 0.5  # funding mostly positive -> engaged most bars
 
 
+def test_cross_exchange_funding_backtest():
+    """A persistent positive A-minus-B spread is collected (gross positive, delta-neutral)."""
+    from perp_quant_bot.strategies.cross_exchange import cross_exchange_funding_backtest
+
+    cfg = load_config()
+    rng = np.random.default_rng(9)
+    idx = pd.date_range("2024-01-01", periods=300, freq="8h", tz="UTC")
+    cols = [f"S{i}/USDT:USDT" for i in range(4)]
+    f_b = pd.DataFrame({c: rng.normal(0, 0.0001, len(idx)) for c in cols}, index=idx)
+    f_a = f_b + 0.0002 + pd.DataFrame(rng.normal(0, 2e-5, (len(idx), len(cols))), index=idx, columns=cols)
+    r = cross_exchange_funding_backtest(f_a, f_b, cfg, fee_rate=0.0, slippage_bps=0.0)
+    m = r["metrics"]
+    assert m["n_symbols"] == 4
+    assert m["pct_engaged"] > 0.8  # spread clears the threshold almost always
+    assert m["gross_total_return"] > 0  # persistent spread, zero cost -> collected
+
+
 def test_leverage_report_scales_and_flags_liquidation():
     from perp_quant_bot.strategies.basis_carry import leverage_report
 

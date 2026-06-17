@@ -97,6 +97,14 @@ overfitting` (CSCV) quantifies overfitting. `pqb cpcv` demo on ETH 1h directiona
 15 paths -> mean Sharpe -0.25, median -0.36, only 40% of paths >0 -> the "no edge"
 verdict is robust to path choice, not a single unlucky split.
 
+**Cross-exchange funding spread (Bybit vs OKX).** Short the higher-funding venue,
+long the lower (same perp) to collect the differential — delta-neutral, no spot.
+Honest result (~3 months, the venues cap funding history): GROSS return ~**0.1%**
+with a high Sharpe (tiny but consistent), turnover 0.39/bar. At ANY realistic cost
+(>=1bp) it goes deeply negative (DSR=0) — the differential between two major liquid
+venues is arbitraged to near-zero and flips too often to beat two-perp costs.
+**Verdict: not a viable standalone edge between major venues.** (`pqb xfunding`.)
+
 **Microstructure: costs or skew? (decisive gross test.)** Re-ran the 5m flow +
 positioning test at ZERO cost. Even gross it loses: technical -52%, +flow -36%,
 +flow+positioning **-32% with a 60.7% hit-rate**. So the unprofitability is NOT

@@ -235,6 +235,41 @@ def basis(
 
 
 @app.command()
+def xfunding(
+    venue_a: str = typer.Option("bybit", help="venue to SHORT when its funding is higher"),
+    venue_b: str = typer.Option("okx", help="venue to LONG (lower funding)"),
+    lookback_days: int = typer.Option(365, help="funding history depth"),
+) -> None:
+    """Cross-exchange funding-spread carry: perp-perp, delta-neutral, no spot.
+
+    Collects the inter-venue funding differential. A second market-neutral edge to
+    stack with the basis carry.
+    """
+    from .strategies import run_cross_exchange
+
+    res = run_cross_exchange(venue_a=venue_a, venue_b=venue_b, lookback_days=lookback_days)
+    m = res["metrics"]
+    typer.echo(
+        f"cross-exchange {venue_a} vs {venue_b} ({m['n_symbols']} names): "
+        f"GROSS sharpe={m['gross_sharpe']:.2f} ret={m['gross_total_return']:.1%} | "
+        f"engaged={m['pct_engaged']:.0%} turnover/bar={m['avg_turnover']:.2f}"
+    )
+    for row in res.get("fee_table", []):
+        typer.echo(
+            f"    {row['fee_bps']:>4.1f} bp -> sharpe={row['net_sharpe']:6.2f} "
+            f"ret={row['net_return']:7.1%} PSR={row['psr']:.2f} DSR={row['dsr']:.2f}"
+        )
+    oos = res.get("oos", {})
+    if oos:
+        h1, h2 = oos.get("h1_in", {}), oos.get("h2_oos", {})
+        typer.echo(
+            f"  OOS @maker1bp: H1 sharpe={h1.get('sharpe', float('nan')):.2f} "
+            f"ret={h1.get('return', float('nan')):.1%} | "
+            f"H2 sharpe={h2.get('sharpe', float('nan')):.2f} ret={h2.get('return', float('nan')):.1%}"
+        )
+
+
+@app.command()
 def cpcv(
     symbol: str = typer.Argument(..., help="e.g. ETH/USDT:USDT"),
     n_groups: int = typer.Option(6, help="time blocks"),
