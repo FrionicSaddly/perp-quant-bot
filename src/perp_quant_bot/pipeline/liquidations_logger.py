@@ -1,17 +1,23 @@
-"""WebSocket liquidations collector for Bybit perps (ccxt.pro).
+"""WebSocket liquidations collector for Bybit perps (direct V5 public stream).
 
 Liquidation cascades are one of the most predictive short-horizon perp signals
 (forced flow that overshoots, then snaps back). Bybit only streams them over
-WebSocket, so this uses ccxt.pro to subscribe per symbol and append each event.
+WebSocket. We connect directly to the documented V5 public endpoint via aiohttp
+(already a dependency) and subscribe to the ``allLiquidation.{symbol}`` topic.
 
-Bounded by ``duration`` so it fits a scheduled CI job; designed to fail soft
-(retry market load, swallow transient socket errors) so a long run never crashes.
-Liquidations are sporadic — short bursts capture whatever happens in the window;
-over many runs a useful sample accumulates.
+Why not ccxt.pro: its bybit ``load_markets`` fails on the linear instruments
+endpoint in this ccxt build (both locally and in CI), which blocks ``watch_*``.
+The raw stream needs no market load and is robust.
+
+Bounded by ``duration`` so it fits a scheduled CI job; fails soft (transient
+socket errors are swallowed, empty windows are normal — liquidations are
+sporadic). Over many short runs a useful sample accumulates.
 """
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from datetime import datetime, timezone
 
 from ..logging_conf import setup_logging
@@ -19,85 +25,84 @@ from .microstructure_logger import MICRO_UNIVERSE
 
 logger = setup_logging()
 
-LIQ_FIELDS = ["ts", "datetime", "venue", "symbol", "side", "price", "amount", "quote_value", "logged_at"]
+BYBIT_WS_LINEAR = "wss://stream.bybit.com/v5/public/linear"
+LIQ_FIELDS = ["ts", "datetime", "venue", "symbol", "side", "price", "amount", "logged_at"]
 
 
-def normalize_liquidation(liq: dict, venue: str) -> dict:
-    """Map a ccxt unified liquidation to our flat schema (defensive .get)."""
-    amount = liq.get("contracts")
-    if amount is None:
-        amount = liq.get("amount")
+def to_bybit_symbol(sym: str) -> str:
+    """`BTC/USDT:USDT` -> `BTCUSDT` (Bybit WS topic symbol)."""
+    return sym.split(":")[0].replace("/", "")
+
+
+def normalize_bybit_liquidation(item: dict, venue: str = "bybit") -> dict:
+    """Map a Bybit V5 `allLiquidation` data item to our flat schema.
+
+    Item fields: T (ms ts), s (symbol), S (liquidated side Buy/Sell), v (size), p (price).
+    """
+    ts = item.get("T")
+    dt = None
+    if ts is not None:
+        try:
+            dt = datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc).isoformat()
+        except Exception:  # noqa: BLE001
+            dt = None
     return {
-        "ts": liq.get("timestamp"),
-        "datetime": liq.get("datetime"),
+        "ts": int(ts) if ts is not None else None,
+        "datetime": dt,
         "venue": venue,
-        "symbol": liq.get("symbol"),
-        "side": liq.get("side"),
-        "price": liq.get("price"),
-        "amount": amount,
-        "quote_value": liq.get("quoteValue"),
+        "symbol": item.get("s"),
+        "side": item.get("S"),
+        "price": float(item["p"]) if item.get("p") is not None else None,
+        "amount": float(item["v"]) if item.get("v") is not None else None,
         "logged_at": datetime.now(timezone.utc).isoformat(),
     }
-
-
-async def _load_markets_retry(ex, retries: int = 6) -> bool:
-    for i in range(retries):
-        try:
-            await ex.load_markets()
-            return True
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("WS load_markets retry {}/{}: {}", i + 1, retries,
-                           str(exc).splitlines()[0][:80])
-            await asyncio.sleep(2.0 * (i + 1))
-    return False
 
 
 async def collect_liquidations(
     venue: str = "bybit", symbols: list[str] | None = None, duration: float = 600.0
 ) -> list[dict]:
-    """Subscribe to liquidations for ``symbols`` and collect events for ``duration`` s."""
-    import ccxt.pro as ccxtpro
+    """Subscribe to Bybit liquidations for ``symbols`` and collect for ``duration`` s."""
+    import aiohttp
+
+    if venue != "bybit":
+        logger.error("direct WS liquidations only implemented for bybit (got {})", venue)
+        return []
 
     symbols = symbols or MICRO_UNIVERSE
-    ex = getattr(ccxtpro, venue)({
-        "enableRateLimit": True,
-        "options": {"defaultType": "swap", "fetchMarkets": ["linear"]},
-    })
+    topics = [f"allLiquidation.{to_bybit_symbol(s)}" for s in symbols]
     events: list[dict] = []
-    if not await _load_markets_retry(ex):
-        logger.error("WS load_markets failed after retries; no liquidations collected")
-        await ex.close()
-        return events
+    logger.info("WS liquidations: {} topics, duration={}s", len(topics), duration)
 
-    stop = asyncio.Event()
-
-    async def watch(sym: str) -> None:
-        while not stop.is_set():
-            try:
-                liqs = await ex.watch_liquidations(sym)
-                for liq in liqs:
-                    events.append(normalize_liquidation(liq, venue))
-                    logger.info("LIQ {} {} amt={} @ {}", sym, liq.get("side"),
-                                liq.get("contracts") or liq.get("amount"), liq.get("price"))
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("watch_liquidations {} err: {}", sym, exc)
-                await asyncio.sleep(1.0)
-
-    logger.info("WS liquidations: venue={} symbols={} duration={}s", venue, len(symbols), duration)
-    tasks = [asyncio.create_task(watch(s)) for s in symbols]
+    end = time.time() + duration
     try:
-        await asyncio.sleep(duration)
-    finally:
-        stop.set()
-        for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        try:
-            await ex.close()
-        except Exception:  # noqa: BLE001
-            pass
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(BYBIT_WS_LINEAR, heartbeat=20.0) as ws:
+                await ws.send_json({"op": "subscribe", "args": topics})
+                logger.info("subscribed; streaming liquidations...")
+                while time.time() < end:
+                    remaining = end - time.time()
+                    try:
+                        msg = await asyncio.wait_for(ws.receive(), timeout=min(remaining, 10.0))
+                    except asyncio.TimeoutError:
+                        continue
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        try:
+                            payload = json.loads(msg.data)
+                        except Exception:  # noqa: BLE001
+                            continue
+                        topic = payload.get("topic", "")
+                        if topic.startswith("allLiquidation"):
+                            for it in payload.get("data", []) or []:
+                                ev = normalize_bybit_liquidation(it, venue)
+                                events.append(ev)
+                                logger.info("LIQ {} {} amt={} @ {}",
+                                            ev["symbol"], ev["side"], ev["amount"], ev["price"])
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        logger.warning("WS closed/error; stopping")
+                        break
+    except Exception as exc:  # noqa: BLE001
+        logger.error("WS liquidations failed: {}", str(exc).splitlines()[0][:120])
+
     logger.info("collected {} liquidation events", len(events))
     return events
 

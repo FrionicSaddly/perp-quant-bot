@@ -66,21 +66,21 @@ def test_snapshot_fields_and_cvd_dedup(tmp_path):
     assert row2["cvd_delta"] == 0.0 and row2["trade_count"] == 0
 
 
-def test_normalize_liquidation():
-    from perp_quant_bot.pipeline.liquidations_logger import normalize_liquidation
+def test_normalize_bybit_liquidation_and_symbol():
+    from perp_quant_bot.pipeline.liquidations_logger import (
+        normalize_bybit_liquidation,
+        to_bybit_symbol,
+    )
 
-    liq = {
-        "timestamp": 123, "datetime": "2026-06-17T00:00:00Z", "symbol": "BTC/USDT:USDT",
-        "side": "sell", "price": 65000.0, "contracts": 0.5, "quoteValue": 32500.0,
-    }
-    r = normalize_liquidation(liq, "bybit")
-    assert r["ts"] == 123 and r["symbol"] == "BTC/USDT:USDT" and r["side"] == "sell"
-    assert r["price"] == 65000.0 and r["amount"] == 0.5 and r["quote_value"] == 32500.0
-    assert r["venue"] == "bybit" and r["logged_at"]
+    assert to_bybit_symbol("BTC/USDT:USDT") == "BTCUSDT"
+    assert to_bybit_symbol("ETH/USDT") == "ETHUSDT"
 
-    # falls back to "amount" when "contracts" is absent
-    liq2 = {"timestamp": 1, "symbol": "ETH/USDT:USDT", "side": "buy", "price": 1.0, "amount": 2.0}
-    assert normalize_liquidation(liq2, "bybit")["amount"] == 2.0
+    # Bybit V5 allLiquidation item: T ts(ms), s symbol, S side, v size, p price
+    item = {"T": 1739502302929, "s": "BTCUSDT", "S": "Sell", "v": "0.5", "p": "65000.0"}
+    r = normalize_bybit_liquidation(item, "bybit")
+    assert r["ts"] == 1739502302929 and r["symbol"] == "BTCUSDT" and r["side"] == "Sell"
+    assert r["price"] == 65000.0 and r["amount"] == 0.5 and r["venue"] == "bybit"
+    assert r["datetime"] and r["logged_at"]
 
 
 def test_append_writes_csv_with_header(tmp_path):
