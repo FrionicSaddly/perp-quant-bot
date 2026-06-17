@@ -26,7 +26,7 @@ def build_feature_matrix(
     *anchor_ohlcv* (optional) adds leak-free cross-asset (e.g. BTC) features.
     """
     tech = technical_features(ohlcv, cfg)
-    micro = microstructure_features(funding_oi, ohlcv.index, cfg)
+    micro = microstructure_features(funding_oi, ohlcv.index, cfg, close=ohlcv["close"])
     atr = compute_atr(ohlcv, cfg.features.atr_period)
 
     parts = [tech, micro]

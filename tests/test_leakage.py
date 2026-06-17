@@ -35,6 +35,41 @@ def make_synthetic_ohlcv(n: int = 2000, seed: int = 11) -> pd.DataFrame:
     )
 
 
+def test_meta_labeling_causal_binary_and_correct():
+    """Primary side is causal; meta-labels are binary and only 1 when the side
+    matches the realized barrier sign."""
+    from perp_quant_bot.labeling import meta_labels, primary_side
+
+    ohlcv = make_synthetic_ohlcv()
+    close = ohlcv["close"]
+
+    # causal: primary side at t unchanged when future bars are appended
+    full = primary_side(close, window=24)
+    for t in (300, 900, 1500):
+        trunc = primary_side(close.iloc[: t + 1], window=24)
+        assert full.iloc[t] == trunc.iloc[t]
+
+    # binary + correctness vs an explicit triple-barrier label series
+    tb = pd.Series([1, -1, 0, 1, -1], index=close.index[:5])
+    side = pd.Series([1, 1, 1, -1, -1], index=close.index[:5])
+    ml = meta_labels(side, tb)
+    assert set(ml.unique()).issubset({0, 1})
+    # (+1 side, +1 label)=1 ; (+1,-1)=0 ; (+1,0)=0 ; (-1,+1)=0 ; (-1,-1)=1
+    assert ml.tolist() == [1, 0, 0, 0, 1]
+
+
+def test_regime_breakdown_keys():
+    from perp_quant_bot.pipeline.train import regime_breakdown
+
+    cfg = load_config()
+    ohlcv = make_synthetic_ohlcv()
+    atr_pct = (ohlcv["high"] - ohlcv["low"]).rolling(14).mean() / ohlcv["close"]
+    sig = pd.Series(np.sign(np.sin(np.arange(len(ohlcv)) / 7.0)).astype(int), index=ohlcv.index)
+    rb = regime_breakdown(ohlcv, sig, atr_pct, cfg)
+    for k in ("low_vol", "high_vol", "trend_up", "trend_dn"):
+        assert k in rb and "hit_rate" in rb[k] and "n" in rb[k]
+
+
 def test_features_are_causal():
     """A feature at bar t must be identical whether computed on the full series or
     on the series truncated at t (i.e. it cannot depend on t+1..)."""

@@ -59,6 +59,13 @@ class ModelCfg(BaseModel):
     n_seeds: int = 1            # seed-ensemble size (averages probabilities)
     calibrate: bool = False     # leak-safe chronological probability calibration
     params: dict = Field(default_factory=dict)
+    # --- meta-labeling (precision-first): a momentum primary picks the side, a
+    # secondary model decides whether to ACT, so we trade fewer but higher-precision
+    # signals. (Lopez de Prado, Ch. 3.) ---
+    meta_labeling: bool = False
+    meta_threshold: float = 0.55   # act only when P(primary is correct) exceeds this
+    primary_window: int = 24       # lookback bars for the primary side
+    primary_kind: str = "momentum"  # momentum (trend-follow) | reversion (fade the move)
 
 
 class ValidationCfg(BaseModel):
