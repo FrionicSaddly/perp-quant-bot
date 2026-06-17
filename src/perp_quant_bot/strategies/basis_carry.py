@@ -182,4 +182,22 @@ def run_basis_carry(
             row["fee_bps"], row["net_sharpe"], row["net_return"], row["psr"], row["dsr"],
         )
     primary["fee_table"] = table
+
+    # Out-of-sample stability: split the funding-covered period in half (maker 1bp).
+    common = perp_close.index.intersection(spot_close.index).intersection(funding.index)
+    pc2, sc2, f2 = perp_close.loc[common], spot_close.loc[common], funding.loc[common]
+    half = len(common) // 2
+    oos: dict[str, dict] = {}
+    for lbl, sl in [("h1_in", slice(0, half)), ("h2_oos", slice(half, len(common)))]:
+        rr = basis_carry_backtest(
+            pc2.iloc[sl], sc2.iloc[sl], f2.iloc[sl], cfg, fee_rate=0.0001, slippage_bps=0.0
+        )
+        oos[lbl] = {"sharpe": rr["metrics"]["sharpe"], "return": rr["metrics"]["total_return"]}
+    primary["oos"] = oos
+    logger.info(
+        "  OOS @maker1bp: H1(in) sharpe={:.2f} ret={:.1%} | H2(oos) sharpe={:.2f} ret={:.1%}",
+        oos["h1_in"]["sharpe"], oos["h1_in"]["return"], oos["h2_oos"]["sharpe"], oos["h2_oos"]["return"],
+    )
+
+    primary["data"] = {"perp_close": perp_close, "spot_close": spot_close, "funding": funding}
     return primary

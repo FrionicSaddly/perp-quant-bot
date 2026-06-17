@@ -189,6 +189,14 @@ def basis(venue: str = typer.Option("mexc", help="Venue with spot + perp + fundi
             f"ret={row['net_return']:7.1%} PSR={row['psr']:.2f} DSR={row['dsr']:.2f}"
         )
     typer.echo("  (0bp=gross; 1-2bp~maker [how basis-arb is run]; 5.5bp=taker)")
+    oos = res.get("oos", {})
+    if oos:
+        h1, h2 = oos.get("h1_in", {}), oos.get("h2_oos", {})
+        typer.echo(
+            f"  OOS @maker1bp: H1(in) sharpe={h1.get('sharpe', float('nan')):.2f} "
+            f"ret={h1.get('return', float('nan')):.1%} | "
+            f"H2(oos) sharpe={h2.get('sharpe', float('nan')):.2f} ret={h2.get('return', float('nan')):.1%}"
+        )
 
 
 @app.command()
