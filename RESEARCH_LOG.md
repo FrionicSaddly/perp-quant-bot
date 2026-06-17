@@ -81,3 +81,27 @@ profitable at these costs. Realistic uses are as a **filter/overlay** or combine
 with the (untestable-historically) **live order-book depth** now being collected.
 Validated earner remains the basis carry. The live collectors keep running so the
 depth angle and an overlay can be evaluated once enough varied-regime data exists.
+
+## 2026-06: improving the validated edge + harder validation
+
+**Carry concentration (top-K).** Broadened the Binance universe to 20 names and
+added leak-safe top-K selection (hold the K richest-funding names each bar). On
+4.4y at maker fees: full basket 27.7% total (~5.7%/yr, Sharpe 9.8); **top-8 lifts
+to 35.1% (~7%/yr) at near-identical risk** (Sharpe 9.6, OOS-H2 10.8). top-3/5 raise
+return more but lose Sharpe to rotation turnover. `pqb basis --top-k 8`. A real,
+modest, market-neutral improvement to the money-maker.
+
+**CPCV + PBO.** Upgraded validation: `combinatorial_purged_splits` gives a
+DISTRIBUTION of OOS performance (all C(n,k) paths), and `probability_of_backtest_
+overfitting` (CSCV) quantifies overfitting. `pqb cpcv` demo on ETH 1h directional:
+15 paths -> mean Sharpe -0.25, median -0.36, only 40% of paths >0 -> the "no edge"
+verdict is robust to path choice, not a single unlucky split.
+
+**Microstructure: costs or skew? (decisive gross test.)** Re-ran the 5m flow +
+positioning test at ZERO cost. Even gross it loses: technical -52%, +flow -36%,
++flow+positioning **-32% with a 60.7% hit-rate**. So the unprofitability is NOT
+execution cost (maker/rebates won't fix a gross-negative strategy) — it's negative
+payoff skew in the triple-barrier directional framing. The microstructure features
+clearly help (hit 52->61%, loss halved, Sharpe -1.0->-0.4), confirming real signal,
+but this construction can't monetize it. **Conclusion: use microstructure as a
+filter/overlay (e.g. gate carry entries), not a standalone directional bot.**
