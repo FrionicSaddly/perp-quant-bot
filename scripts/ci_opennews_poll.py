@@ -3,10 +3,15 @@
 No project imports / heavy deps — only httpx + pandas + pyarrow — so CI stays fast.
 Reads OPENNEWS_TOKEN from the environment (a GitHub secret), polls once, dedupes by
 id against an existing parquet, and appends new rows.
+
+Captures the FULL structure: article-level aiRating (signal/grade/score), the
+per-coin list (each {symbol, signal, score, grade}) as JSON, and the raw item (minus
+the long text) so nothing of value is lost for later feature engineering.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -14,6 +19,27 @@ import httpx
 import pandas as pd
 
 API_BASE = "https://ai.6551.io"
+
+
+def _record(it: dict, now: str) -> dict:
+    ai = it.get("aiRating") or {}
+    coins = it.get("coins")
+    raw = {k: v for k, v in it.items() if k != "text"}
+    return {
+        "id": str(it.get("id")),
+        "ts": it.get("ts"),
+        "engineType": it.get("engineType"),
+        "newsType": it.get("newsType"),
+        "source": it.get("source"),
+        "score": it.get("score"),
+        "ai_signal": ai.get("signal"),
+        "ai_grade": ai.get("grade"),
+        "ai_score": ai.get("score"),
+        "coins_json": json.dumps(coins, ensure_ascii=False) if coins is not None else None,
+        "raw": json.dumps(raw, ensure_ascii=False),
+        "text": (it.get("text") or it.get("description") or "")[:300],
+        "logged_at": now,
+    }
 
 
 def main() -> int:
@@ -44,29 +70,12 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             seen = set()
 
-    rows = []
     now = pd.Timestamp.now(tz="UTC").isoformat()
-    for it in items:
-        rid = str(it.get("id"))
-        if not rid or rid == "None" or rid in seen:
-            continue
-        coins = it.get("coins")
-        if isinstance(coins, list):
-            coins = ",".join(str(c) for c in coins)
-        rows.append(
-            {
-                "id": rid,
-                "ts": it.get("ts"),
-                "engineType": it.get("engineType"),
-                "newsType": it.get("newsType"),
-                "source": it.get("source"),
-                "score": it.get("score"),
-                "signal": it.get("signal") or it.get("tradingSignal") or it.get("direction"),
-                "coins": coins,
-                "text": (it.get("text") or it.get("description") or "")[:500],
-                "logged_at": now,
-            }
-        )
+    rows = [
+        _record(it, now)
+        for it in items
+        if str(it.get("id")) not in seen and str(it.get("id")) not in ("None", "")
+    ]
 
     if not rows:
         print("no new items")

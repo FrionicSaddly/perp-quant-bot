@@ -6,6 +6,7 @@ signal history that an honest backtest needs. Output lives under data/raw (git-i
 """
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -19,9 +20,9 @@ logger = setup_logging()
 
 
 def _normalize(item: dict) -> dict:
+    ai = item.get("aiRating") or {}
     coins = item.get("coins")
-    if isinstance(coins, list):
-        coins = ",".join(str(c) for c in coins)
+    raw = {k: v for k, v in item.items() if k != "text"}
     return {
         "id": str(item.get("id")),
         "ts": item.get("ts"),
@@ -29,9 +30,12 @@ def _normalize(item: dict) -> dict:
         "newsType": item.get("newsType"),
         "source": item.get("source"),
         "score": item.get("score"),
-        "signal": item.get("signal") or item.get("tradingSignal") or item.get("direction"),
-        "coins": coins,
-        "text": (item.get("text") or item.get("description") or "")[:500],
+        "ai_signal": ai.get("signal"),
+        "ai_grade": ai.get("grade"),
+        "ai_score": ai.get("score"),
+        "coins_json": json.dumps(coins, ensure_ascii=False) if coins is not None else None,
+        "raw": json.dumps(raw, ensure_ascii=False),
+        "text": (item.get("text") or item.get("description") or "")[:300],
     }
 
 
