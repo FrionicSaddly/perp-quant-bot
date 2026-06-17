@@ -209,6 +209,35 @@ def _load_binance_vision(cfg: Config, symbols: list[str]):
     return perp_close, spot_close, funding
 
 
+def leverage_report(net: pd.Series, levels=(1, 2, 3, 5, 8)) -> list[dict]:
+    """Honest leverage sweep on a delta-neutral net-return series.
+
+    Leverage scales return AND drawdown ~linearly (Sharpe is scale-invariant), so
+    this shows the real return/risk trade-off — and flags leverage where a single
+    bar would have blown the account (liquidation). Optimistic: the backtest does
+    not model funding flips, borrow, two-venue margin or real slippage, all of
+    which bite harder when levered. Size for the WORST case, not this curve.
+    """
+    net = net.dropna()
+    if net.empty:
+        return []
+    bpy = infer_bars_per_year(net.index)
+    yrs = max(len(net) / bpy, 1e-9)
+    rows = []
+    for lev in levels:
+        scaled = lev * net
+        wiped = bool((1.0 + scaled <= 0).any())  # a single bar that wipes the account
+        eq = (1.0 + scaled.clip(lower=-0.999)).cumprod()
+        end = float(eq.iloc[-1])
+        ann = end ** (1.0 / yrs) - 1.0 if end > 0 else float("nan")
+        dd = float((eq / eq.cummax() - 1.0).min())
+        rows.append({
+            "leverage": lev, "ann_return": ann, "max_dd": dd,
+            "sharpe": sharpe(scaled, bpy), "liquidation_risk": wiped,
+        })
+    return rows
+
+
 def run_basis_carry(
     cfg: Config | None = None,
     symbols: list[str] | None = None,
@@ -301,6 +330,17 @@ def run_basis_carry(
             "    top_k={:>3} -> NET sharpe={:6.2f} ret={:7.1%} DSR={:.2f} turn={:.2f} | OOS-H2 sharpe={:6.2f}",
             row["top_k"], row["net_sharpe"], row["net_return"], row["dsr"],
             row["turnover"], row["oos_sharpe"],
+        )
+
+    # Leverage sweep on the headline net book (maker 1bp): how big can % get, at what risk?
+    lev_rows = leverage_report(primary["net"])
+    primary["leverage"] = lev_rows
+    logger.info("  leverage (on the headline net book; OPTIMISTIC - see caveats):")
+    for row in lev_rows:
+        flag = "  !! LIQUIDATION RISK" if row["liquidation_risk"] else ""
+        logger.info(
+            "    {:>2}x -> ann={:7.1%} maxDD={:7.1%} sharpe={:5.2f}{}",
+            row["leverage"], row["ann_return"], row["max_dd"], row["sharpe"], flag,
         )
 
     primary["data"] = {"perp_close": perp_close, "spot_close": spot_close, "funding": funding}

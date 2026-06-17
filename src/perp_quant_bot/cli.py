@@ -223,6 +223,15 @@ def basis(
             f"ret={h1.get('return', float('nan')):.1%} | "
             f"H2(oos) sharpe={h2.get('sharpe', float('nan')):.2f} ret={h2.get('return', float('nan')):.1%}"
         )
+    lev = res.get("leverage", [])
+    if lev:
+        typer.echo("  leverage (ann return / maxDD; OPTIMISTIC - funding flips & frictions not modeled):")
+        for row in lev:
+            flag = "  !! LIQUIDATION RISK" if row["liquidation_risk"] else ""
+            typer.echo(
+                f"    {row['leverage']:>2}x -> ann={row['ann_return']:7.1%} "
+                f"maxDD={row['max_dd']:7.1%} sharpe={row['sharpe']:5.2f}{flag}"
+            )
 
 
 @app.command()

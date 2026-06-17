@@ -141,6 +141,22 @@ def test_basis_carry_backtest_runs():
     assert m["pct_engaged"] > 0.5  # funding mostly positive -> engaged most bars
 
 
+def test_leverage_report_scales_and_flags_liquidation():
+    from perp_quant_bot.strategies.basis_carry import leverage_report
+
+    rng = np.random.default_rng(5)
+    idx = pd.date_range("2024-01-01", periods=400, freq="1D", tz="UTC")
+    net = pd.Series(0.0005 + rng.normal(0, 0.0002, 400), index=idx)  # small positive + noise
+    by = {r["leverage"]: r for r in leverage_report(net, levels=(1, 2, 5))}
+    assert abs(by[1]["sharpe"] - by[5]["sharpe"]) < 1e-6  # Sharpe is scale-invariant
+    assert by[5]["ann_return"] > by[2]["ann_return"] > by[1]["ann_return"]  # return scales up
+    assert not by[5]["liquidation_risk"]
+
+    blown = net.copy()
+    blown.iloc[10] = -0.5  # a -50% bar at 3x -> -150% -> account wiped
+    assert leverage_report(blown, levels=(3,))[0]["liquidation_risk"]
+
+
 def test_basis_carry_top_k_concentrates():
     """top_k holds only the K richest-funding names each bar (leak-safe ranking)."""
     from perp_quant_bot.strategies.basis_carry import basis_carry_backtest
