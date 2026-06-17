@@ -226,6 +226,48 @@ def basis(
 
 
 @app.command()
+def cpcv(
+    symbol: str = typer.Argument(..., help="e.g. ETH/USDT:USDT"),
+    n_groups: int = typer.Option(6, help="time blocks"),
+    k_test: int = typer.Option(2, help="test blocks per combination"),
+) -> None:
+    """Combinatorial Purged CV: OOS Sharpe DISTRIBUTION across all C(n,k) paths.
+
+    One walk-forward number can be luck; this shows the spread. A robust edge stays
+    positive across most paths — most of our directional configs do not.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from .backtest import backtest_signal
+    from .pipeline.train import build_model, prepare_dataset
+    from .validation import combinatorial_purged_splits
+
+    cfg = load_config()
+    ds = prepare_dataset(cfg, symbol)
+    X, y, t1, w = ds["X"], ds["y"], ds["t1"], ds["w"]
+    splits = combinatorial_purged_splits(X.index, t1, n_groups, k_test, cfg.validation.embargo_bars)
+    if not splits:
+        typer.echo("not enough data for CPCV")
+        return
+    sharpes = []
+    for tr, te in splits:
+        m = build_model(cfg)
+        m.fit(X.iloc[tr], y.iloc[tr], sample_weight=w.iloc[tr].to_numpy())
+        ti = X.index[te]
+        sig = pd.Series(m.predict_signal(X.iloc[te]), index=ti)
+        bt = backtest_signal(ds["ohlcv"].loc[ti], sig, ds["atr_pct"].loc[ti], cfg, ds["funding"])
+        sharpes.append(bt["metrics"]["sharpe"])
+    a = np.array([s for s in sharpes if np.isfinite(s)])
+    typer.echo(f"CPCV {symbol}: {len(a)} paths (C({n_groups},{k_test}))")
+    typer.echo(
+        f"  OOS sharpe: mean={a.mean():.2f} median={np.median(a):.2f} std={a.std():.2f} "
+        f"min={a.min():.2f} max={a.max():.2f} | %>0={np.mean(a > 0):.0%}"
+    )
+    typer.echo("  A real edge stays >0 across most paths; ~50% and mean~0 = no edge.")
+
+
+@app.command()
 def newslog(
     once: bool = typer.Option(False, help="Single poll then exit"),
     interval: int = typer.Option(90, help="Seconds between polls"),
