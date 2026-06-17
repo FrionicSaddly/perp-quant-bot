@@ -52,6 +52,7 @@ def basis_carry_backtest(
     fee_rate: float | None = None,
     slippage_bps: float | None = None,
     top_k: int | None = None,
+    weight_mode: str = "equal",
 ) -> dict:
     """Aligned [time x symbol] perp_close + spot_close + funding -> delta-neutral carry.
 
@@ -59,6 +60,11 @@ def basis_carry_backtest(
     (concentrate capital in the richest carry) instead of the whole positive-funding
     basket. Leak-free (ranking uses shifted funding). Concentration lifts gross yield
     but adds turnover as names rotate — the net/DSR comparison decides if it's worth it.
+
+    ``weight_mode``: "equal" = fixed 1/N (or 1/K) notional, leaving capital idle when
+    few names engage (low turnover). "funding" = FULLY deploy into the selected names
+    weighted by funding magnitude (more into the richest carry) — squeezes more yield
+    at the cost of turnover/concentration; judged on net/DSR/OOS.
     """
     common = perp_close.index.intersection(spot_close.index).intersection(funding.index)
     cols = perp_close.columns
@@ -84,9 +90,17 @@ def basis_carry_backtest(
         masked = prior.where(engage > 0)
         keep = (masked.rank(axis=1, ascending=False, method="first") <= top_k).astype(float)
         engage = engage * keep
-        w = engage * (1.0 / top_k)  # fixed 1/K notional; <K engaged -> some cash idle
+        denom = float(top_k)
     else:
-        w = engage * (1.0 / max(len(cols), 1))  # fixed notional per symbol
+        denom = float(max(len(cols), 1))
+
+    if weight_mode == "funding":
+        # Fully deploy into the selected names, weighted by funding magnitude.
+        fw = prior.clip(lower=0.0) * engage
+        rowsum = fw.sum(axis=1)
+        w = fw.div(rowsum.where(rowsum > 0, 1.0), axis=0)
+    else:
+        w = engage * (1.0 / denom)  # fixed notional; <denom engaged -> some cash idle
 
     # per-symbol delta-neutral return over bar t: funding received (short perp) + basis drift
     per_sym = f.fillna(0.0) + (spot_ret - perp_ret).fillna(0.0)
@@ -126,6 +140,10 @@ BINANCE_BASKET = [
     "SOLUSDT", "DOGEUSDT", "LTCUSDT", "LINKUSDT", "AVAXUSDT",
     "DOTUSDT", "TRXUSDT", "BCHUSDT", "ATOMUSDT", "ETCUSDT",
     "FILUSDT", "APTUSDT", "NEARUSDT", "UNIUSDT", "AAVEUSDT",
+    # alt-tail: richer/more variable funding (loader skips any without spot+perp+funding)
+    "OPUSDT", "ARBUSDT", "SUIUSDT", "INJUSDT", "SEIUSDT",
+    "TIAUSDT", "RUNEUSDT", "SANDUSDT", "GALAUSDT", "AXSUSDT",
+    "APEUSDT", "LDOUSDT", "FTMUSDT", "ALGOUSDT", "ICPUSDT",
 ]
 
 
@@ -244,6 +262,7 @@ def run_basis_carry(
     venue: str = "mexc",
     source: str = "mexc",
     top_k: int | None = None,
+    weight_mode: str = "equal",
 ) -> dict:
     cfg = cfg or load_config()
     if source == "binance_vision":
@@ -260,7 +279,8 @@ def run_basis_carry(
     primary = None
     for bps in fee_levels_bps:
         r = basis_carry_backtest(
-            perp_close, spot_close, funding, cfg, fee_rate=bps / 1e4, slippage_bps=0.0, top_k=top_k
+            perp_close, spot_close, funding, cfg, fee_rate=bps / 1e4, slippage_bps=0.0,
+            top_k=top_k, weight_mode=weight_mode,
         )
         mm = r["metrics"]
         table.append({
@@ -291,7 +311,8 @@ def run_basis_carry(
     oos: dict[str, dict] = {}
     for lbl, sl in [("h1_in", slice(0, half)), ("h2_oos", slice(half, len(common)))]:
         rr = basis_carry_backtest(
-            pc2.iloc[sl], sc2.iloc[sl], f2.iloc[sl], cfg, fee_rate=0.0001, slippage_bps=0.0, top_k=top_k
+            pc2.iloc[sl], sc2.iloc[sl], f2.iloc[sl], cfg, fee_rate=0.0001, slippage_bps=0.0,
+            top_k=top_k, weight_mode=weight_mode,
         )
         oos[lbl] = {"sharpe": rr["metrics"]["sharpe"], "return": rr["metrics"]["total_return"]}
     primary["oos"] = oos
@@ -308,12 +329,13 @@ def run_basis_carry(
         if k is not None and k >= n_avail:
             continue
         rk = basis_carry_backtest(
-            perp_close, spot_close, funding, cfg, fee_rate=0.0001, slippage_bps=0.0, top_k=k
+            perp_close, spot_close, funding, cfg, fee_rate=0.0001, slippage_bps=0.0,
+            top_k=k, weight_mode=weight_mode,
         )
         half2 = len(common) // 2
         rk_oos = basis_carry_backtest(
             pc2.iloc[half2:], sc2.iloc[half2:], f2.iloc[half2:], cfg,
-            fee_rate=0.0001, slippage_bps=0.0, top_k=k,
+            fee_rate=0.0001, slippage_bps=0.0, top_k=k, weight_mode=weight_mode,
         )
         topk_table.append({
             "top_k": k or n_avail,
@@ -330,6 +352,30 @@ def run_basis_carry(
             "    top_k={:>3} -> NET sharpe={:6.2f} ret={:7.1%} DSR={:.2f} turn={:.2f} | OOS-H2 sharpe={:6.2f}",
             row["top_k"], row["net_sharpe"], row["net_return"], row["dsr"],
             row["turnover"], row["oos_sharpe"],
+        )
+
+    # Weighting comparison at the headline concentration: equal vs funding-weighted
+    # (full deployment into the richest funding) — does skewing capital squeeze more NET?
+    k_cmp = top_k if top_k else 8
+    half2 = len(common) // 2
+    weight_cmp: list[dict] = []
+    for wm in ("equal", "funding"):
+        rw = basis_carry_backtest(perp_close, spot_close, funding, cfg,
+                                  fee_rate=0.0001, slippage_bps=0.0, top_k=k_cmp, weight_mode=wm)
+        rw_oos = basis_carry_backtest(pc2.iloc[half2:], sc2.iloc[half2:], f2.iloc[half2:], cfg,
+                                      fee_rate=0.0001, slippage_bps=0.0, top_k=k_cmp, weight_mode=wm)
+        weight_cmp.append({
+            "mode": wm, "net_sharpe": rw["metrics"]["sharpe"], "net_return": rw["metrics"]["total_return"],
+            "dsr": rw["metrics"]["deflated_sharpe"], "turnover": rw["metrics"]["avg_turnover"],
+            "oos_sharpe": rw_oos["metrics"]["sharpe"], "oos_return": rw_oos["metrics"]["total_return"],
+        })
+    primary["weight_cmp"] = weight_cmp
+    logger.info("  weighting @top_k={} (maker 1bp):", k_cmp)
+    for row in weight_cmp:
+        logger.info(
+            "    {:<8} -> NET sharpe={:6.2f} ret={:7.1%} DSR={:.2f} turn={:.2f} | OOS-H2 sharpe={:6.2f} ret={:6.1%}",
+            row["mode"], row["net_sharpe"], row["net_return"], row["dsr"],
+            row["turnover"], row["oos_sharpe"], row["oos_return"],
         )
 
     # Leverage sweep on the headline net book (maker 1bp): how big can % get, at what risk?

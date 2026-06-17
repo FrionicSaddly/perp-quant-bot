@@ -193,15 +193,16 @@ def basis(
     source: str = typer.Option("binance_vision", help="binance_vision (deep multi-year) | mexc"),
     venue: str = typer.Option("mexc", help="ccxt venue when source=mexc"),
     top_k: int = typer.Option(0, help="Hold only the K richest-funding names (0 = full basket)"),
+    weight: str = typer.Option("equal", help="equal | funding (full deploy, skew to richest funding)"),
 ) -> None:
     """Delta-neutral funding (basis) carry: long spot + short perp (validated).
 
-    A concentration sweep is always printed; pass --top-k to make the headline run
-    use that concentration (top-8 historically lifts return ~5.7%->7%/yr at similar risk).
+    Concentration + weighting sweeps are always printed; pass --top-k / --weight to set
+    the headline run (top-8 + funding-weight squeezes the most %; check the OOS column).
     """
     from .strategies import run_basis_carry
 
-    res = run_basis_carry(venue=venue, source=source, top_k=top_k if top_k > 0 else None)
+    res = run_basis_carry(venue=venue, source=source, top_k=top_k if top_k > 0 else None, weight_mode=weight)
     m = res["metrics"]
     typer.echo(
         f"basis-carry ({m['n_symbols']} names, daily): GROSS sharpe={m['gross_sharpe']:.2f} "
@@ -223,6 +224,14 @@ def basis(
             f"ret={h1.get('return', float('nan')):.1%} | "
             f"H2(oos) sharpe={h2.get('sharpe', float('nan')):.2f} ret={h2.get('return', float('nan')):.1%}"
         )
+    wc = res.get("weight_cmp", [])
+    if wc:
+        typer.echo("  weighting (equal vs funding, maker 1bp):")
+        for row in wc:
+            typer.echo(
+                f"    {row['mode']:<8} -> sharpe={row['net_sharpe']:6.2f} ret={row['net_return']:7.1%} "
+                f"DSR={row['dsr']:.2f} turn={row['turnover']:.2f} | OOS-H2 sharpe={row['oos_sharpe']:6.2f}"
+            )
     lev = res.get("leverage", [])
     if lev:
         typer.echo("  leverage (ann return / maxDD; OPTIMISTIC - funding flips & frictions not modeled):")

@@ -91,6 +91,16 @@ to 35.1% (~7%/yr) at near-identical risk** (Sharpe 9.6, OOS-H2 10.8). top-3/5 ra
 return more but lose Sharpe to rotation turnover. `pqb basis --top-k 8`. A real,
 modest, market-neutral improvement to the money-maker.
 
+**Squeezing carry yield (alt-tail universe + funding weighting).** Broadened to 34
+names (added the higher-funding alt tail) and added funding-proportional weighting
+(full deployment into the richest funding). On 4.4y at maker: top-8 net return
+35.1% (20 names) -> **38.4%** (34 names); funding-weight ~= equal (+0.6pp, OOS-H2
+9.75 vs 9.60 — marginal). Leverage on the headline book: 5x ~28%/yr (maxDD -8.8%),
+8x ~49%/yr (maxDD -13.6%). Honest trade-off: more % but **more risk** — turnover
+rose (0.41 -> 0.65), levered drawdown roughly doubled vs the 20-name book, and at
+taker fees it turns negative (maker execution now essential). DSR stays 1.0, OOS-H2
+holds. `pqb basis --top-k 8 --weight funding`.
+
 **CPCV + PBO.** Upgraded validation: `combinatorial_purged_splits` gives a
 DISTRIBUTION of OOS performance (all C(n,k) paths), and `probability_of_backtest_
 overfitting` (CSCV) quantifies overfitting. `pqb cpcv` demo on ETH 1h directional:

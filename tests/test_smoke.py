@@ -216,6 +216,12 @@ def test_basis_carry_top_k_concentrates():
     held = w.iloc[-1] > 0
     assert held["S0/USDT:USDT"] and held["S1/USDT:USDT"]  # the two richest
 
+    # funding weighting: fully deploy (rows sum ~1), most weight to the richest funding
+    rf = basis_carry_backtest(perp, spot, funding, cfg, weight_mode="funding")
+    wf = rf["weights"].iloc[-1]
+    assert abs(wf.sum() - 1.0) < 1e-6
+    assert wf["S0/USDT:USDT"] == wf.max()  # S0 has the highest funding -> highest weight
+
 
 def test_carry_reconcile_idempotent_and_exits():
     """Reconcile = minimal orders to target; no-op at target; closes dropped symbols."""
