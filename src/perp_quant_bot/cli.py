@@ -239,5 +239,49 @@ def paper(once: bool = typer.Option(False, help="Run a single iteration then exi
     run_paper_loop(once=once)
 
 
+@app.command(name="carry-trade")
+def carry_trade(
+    venue: str = typer.Option("bybit", help="Exchange (must have spot + USDT perp + funding)"),
+    capital: float = typer.Option(1000.0, help="Total USDT to deploy across the book"),
+    top_n: int = typer.Option(5, help="Number of highest-funding symbols to carry"),
+    leverage: float = typer.Option(2.0, help="Perp leverage (margin = notional/leverage)"),
+    min_funding: float = typer.Option(0.00003, help="Min funding/8h to engage (0.00003 ~= 3.3%/yr)"),
+    maker: bool = typer.Option(True, help="Estimate fees at maker (else taker)"),
+    live: bool = typer.Option(False, help="Place REAL orders (needs keys + --yes)"),
+    yes: bool = typer.Option(False, help="Confirm real-money execution"),
+) -> None:
+    """Plan (and optionally execute) the delta-neutral basis carry: LONG spot + SHORT perp.
+
+    Default is DRY-RUN: prints the exact book + expected funding income. No money moves
+    without --live AND --yes AND Bybit keys in .env.
+    """
+    from .execution.carry_executor import execute_live, plan_carry, render_plan
+
+    fee = 0.0002 if maker else 0.00055
+    plan = plan_carry(
+        venue=venue, capital=capital, top_n=top_n, min_funding=min_funding,
+        leverage=leverage, fee_rate=fee,
+    )
+    typer.echo(render_plan(plan))
+
+    if not live:
+        typer.echo("\n[dry-run] No orders placed. Add --live --yes (with keys in .env) to execute.")
+        return
+    if not plan.legs:
+        typer.echo("\nNothing to execute (no positive carry right now).")
+        return
+    if not yes:
+        typer.echo("\n[blocked] --live needs explicit --yes. Refusing to spend real money.")
+        return
+    typer.echo("\n[LIVE] Placing real two-leg orders...")
+    try:
+        fills = execute_live(plan, confirm=True)
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"[error] {exc}")
+        raise typer.Exit(code=1) from exc
+    for f in fills:
+        typer.echo(f"  {f}")
+
+
 if __name__ == "__main__":
     app()

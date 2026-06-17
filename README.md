@@ -92,6 +92,9 @@ perp-quant-bot/
 | `pqb backtest` | Simulate the signal with realistic costs; saves metrics/equity report |
 | `pqb leakcheck` | Empirical leak detector: clean vs shuffled-labels vs injected future leak |
 | `pqb paper` | Live paper/testnet loop with daily-loss + data-staleness guards |
+| `pqb basis` | Backtest the delta-neutral basis carry (long spot + short perp) — the one validated edge |
+| `pqb funding-now` | Live funding snapshot: where the carry is right now (positive ⇒ long spot + short perp) |
+| `pqb carry-trade` | Plan the live carry book (dry-run by default); real orders only with `--live --yes` + keys. See `GO_LIVE.md` |
 
 ## License
 

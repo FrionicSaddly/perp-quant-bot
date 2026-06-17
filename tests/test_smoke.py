@@ -141,6 +141,37 @@ def test_basis_carry_backtest_runs():
     assert m["pct_engaged"] > 0.5  # funding mostly positive -> engaged most bars
 
 
+def test_carry_plan_math_and_live_guard():
+    """CarryPlan accounting is correct; execute_live refuses without confirm."""
+    import pytest
+
+    from perp_quant_bot.execution.carry_executor import CarryLeg, CarryPlan, execute_live, render_plan
+
+    # one leg: $100 notional, funding 0.0001/8h -> 0.03/day; leverage 2 -> margin $50
+    leg = CarryLeg(
+        perp_symbol="BTC/USDT:USDT", spot_symbol="BTC/USDT", funding_rate=0.0001,
+        spot_price=100.0, perp_price=100.0, leg_notional=100.0,
+        spot_amount=1.0, perp_amount=1.0, perp_margin=50.0,
+        funding_per_day=100.0 * 0.0001 * 3.0,
+    )
+    plan = CarryPlan(venue="bybit", capital=150.0, leverage=2.0, fee_rate=0.0002, legs=[leg])
+    assert abs(plan.deployed - 150.0) < 1e-9  # notional 100 + margin 50
+    assert abs(plan.funding_per_day - 0.03) < 1e-9
+    assert plan.funding_apr > 0
+    # round trip: 2 legs * notional * fee * 2 = 2*100*0.0002*2 = 0.08
+    assert abs(plan.entry_fees - 0.08) < 1e-9
+    assert plan.payback_days > 0
+    assert "LONG" in render_plan(plan) and "SHORT" in render_plan(plan)
+
+    # empty plan -> sit out message, no crash
+    empty = CarryPlan(venue="bybit", capital=100.0, leverage=2.0, fee_rate=0.0002, legs=[])
+    assert "sit out" in render_plan(empty)
+
+    # the only money-spending path must refuse without explicit confirmation
+    with pytest.raises(RuntimeError):
+        execute_live(plan, confirm=False)
+
+
 def test_paper_broker_fills():
     b = PaperBroker(initial_cash=10_000.0, fee_rate=0.0)
     b.update_price("BTC/USDT:USDT", 100.0)

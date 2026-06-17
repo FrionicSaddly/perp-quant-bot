@@ -46,13 +46,17 @@ def current_funding(venue: str = "bybit", symbols: list[str] | None = None) -> p
         if rate is None:
             continue
         rate = float(rate)
+        # mark price comes free with the funding call (avoids a fetch_ticker that
+        # triggers a full load_markets, whose spot category is geo-flaky on Bybit).
+        mark = fr.get("markPrice") or fr.get("indexPrice") or 0.0
         rows.append({
             "symbol": s,
             "funding_rate": rate,
             "annualized_pct": rate * 3 * 365 * 100.0,  # 8h funding -> rough APR
+            "mark_price": float(mark),
         })
     if not rows:
-        return pd.DataFrame(columns=["symbol", "funding_rate", "annualized_pct"])
+        return pd.DataFrame(columns=["symbol", "funding_rate", "annualized_pct", "mark_price"])
     return pd.DataFrame(rows).sort_values("funding_rate", ascending=False).reset_index(drop=True)
 
 
