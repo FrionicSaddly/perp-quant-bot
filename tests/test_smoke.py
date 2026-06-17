@@ -95,6 +95,27 @@ def test_cross_sectional_backtest_is_market_neutral():
     assert float(res["weights"].sum(axis=1).abs().max()) < 1e-9
 
 
+def test_funding_carry_backtest_is_market_neutral():
+    from perp_quant_bot.strategies.funding_carry import funding_carry_backtest
+
+    cfg = load_config()
+    rng = np.random.default_rng(5)
+    idx = pd.date_range("2024-01-01", periods=400, freq="8h", tz="UTC")
+    cols = [f"S{i}/USDT:USDT" for i in range(8)]
+    close = pd.DataFrame(
+        {c: 100.0 * np.exp(np.cumsum(rng.normal(0, 0.02, len(idx)))) for c in cols}, index=idx
+    )
+    funding = pd.DataFrame(
+        {c: rng.normal(0.0001, 0.0005, len(idx)) for c in cols}, index=idx
+    )
+    res = funding_carry_backtest(close, funding, cfg, top_frac=0.3, min_names=4)
+    m = res["metrics"]
+    for k in ("sharpe", "psr", "deflated_sharpe", "n_symbols"):
+        assert k in m
+    assert m["n_symbols"] == 8
+    assert float(res["weights"].sum(axis=1).abs().max()) < 1e-9  # market-neutral
+
+
 def test_paper_broker_fills():
     b = PaperBroker(initial_cash=10_000.0, fee_rate=0.0)
     b.update_price("BTC/USDT:USDT", 100.0)

@@ -150,6 +150,27 @@ def xsection(
 
 
 @app.command()
+def carry(
+    funding_venue: str = typer.Option("mexc", help="Venue with deep funding history"),
+    top_frac: float = typer.Option(0.30, help="Long-low / short-high funding fraction"),
+) -> None:
+    """Cross-sectional funding-carry, market-neutral (validated on real funding history)."""
+    from .strategies import run_funding_carry
+
+    res = run_funding_carry(funding_venue=funding_venue, top_frac=top_frac)
+    m = res["metrics"]
+    typer.echo(
+        f"funding-carry ({m['n_symbols']} names): sharpe={m['sharpe']:.2f} "
+        f"psr={m.get('psr', float('nan')):.2f} dsr={m.get('deflated_sharpe', float('nan')):.2f} "
+        f"ret={m['total_return']:.1%} maxDD={m['max_drawdown']:.1%}"
+    )
+    typer.echo(
+        f"  funding share of PnL={m.get('funding_pnl_share', float('nan')):.0%} | "
+        f"avg turnover/bar={m.get('avg_turnover', 0.0):.2f}"
+    )
+
+
+@app.command()
 def newslog(
     once: bool = typer.Option(False, help="Single poll then exit"),
     interval: int = typer.Option(90, help="Seconds between polls"),
