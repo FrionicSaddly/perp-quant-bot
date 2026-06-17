@@ -1,0 +1,71 @@
+name: microstructure-logger
+
+# Collects Bybit perp microstructure (order-book imbalance, CVD, open interest,
+# funding) in bounded bursts on a schedule, accumulating into a single parquet on
+# the `microstructure-data` branch (kept separate so `main` stays code-only).
+# Free for public repos. This builds the short-horizon dataset a microstructure-
+# aware model needs.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # every ~15 min (GitHub min is 5; runs may be delayed)
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "seconds to collect"
+        default: "600"
+
+concurrency:
+  group: microstructure-logger
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package
+        run: pip install --quiet -e .
+
+      - name: Restore previous data (if the data branch exists)
+        run: |
+          git fetch origin microstructure-data || true
+          if git rev-parse --verify origin/microstructure-data >/dev/null 2>&1; then
+            git show origin/microstructure-data:microstructure_log.parquet > microstructure_log.parquet || true
+          fi
+
+      - name: Collect microstructure burst
+        run: |
+          python scripts/ci_microstructure_poll.py \
+            --out microstructure_log.parquet \
+            --duration "${{ github.event.inputs.duration || '600' }}" \
+            --interval 15
+
+      - name: Commit data to the microstructure-data branch (plumbing keeps main clean)
+        run: |
+          if [ ! -f microstructure_log.parquet ]; then
+            echo "no data file; nothing to push"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BLOB=$(git hash-object -w microstructure_log.parquet)
+          TREE=$(printf '100644 blob %s\tmicrostructure_log.parquet\n' "$BLOB" | git mktree)
+          if PARENT=$(git rev-parse --verify origin/microstructure-data 2>/dev/null); then
+            COMMIT=$(git commit-tree "$TREE" -p "$PARENT" -m "microstructure burst $(date -u +%FT%TZ)")
+          else
+            COMMIT=$(git commit-tree "$TREE" -m "microstructure init $(date -u +%FT%TZ)")
+          fi
+          git push origin "$COMMIT:refs/heads/microstructure-data"
+          echo "pushed $COMMIT to microstructure-data"

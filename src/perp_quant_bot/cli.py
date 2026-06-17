@@ -303,5 +303,23 @@ def microlog(
     )
 
 
+@app.command()
+def liqlog(
+    venue: str = typer.Option("bybit", help="Exchange to stream liquidations from"),
+    duration: float = typer.Option(600.0, help="Seconds to stream (WebSocket)"),
+) -> None:
+    """Stream perp liquidation events over WebSocket (ccxt.pro) for a bounded window.
+
+    Liquidation cascades are a strong short-horizon signal. Sporadic, so longer
+    windows catch more. Persistence to a data branch is handled by the CI job.
+    """
+    from .pipeline.liquidations_logger import run_liquidations_logger
+
+    events = run_liquidations_logger(venue=venue, duration=duration)
+    typer.echo(f"collected {len(events)} liquidation events")
+    for e in events[-10:]:
+        typer.echo(f"  {e['datetime']} {e['symbol']} {e['side']} amt={e['amount']} @ {e['price']}")
+
+
 if __name__ == "__main__":
     app()

@@ -180,8 +180,17 @@ class MicrostructureCollector:
                     w.writeheader()
                 w.writerow(row)
 
+    def poll_rows(self) -> list[dict]:
+        """Snapshot every symbol and return the rows WITHOUT writing to disk.
+
+        Used by the CI accumulator, which persists to a single parquet on a data
+        branch. CVD dedup state lives on the instance, so looping over this on one
+        collector keeps trade-flow interval-aligned.
+        """
+        return [self.snapshot(s) for s in self.symbols]
+
     def poll_once(self) -> list[dict]:
-        rows = [self.snapshot(s) for s in self.symbols]
+        rows = self.poll_rows()
         self.append(rows)
         return rows
 
