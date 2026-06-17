@@ -27,6 +27,7 @@ api_keys.*
 # Data & models (large / private — do not commit)
 data/raw/
 data/processed/
+data/microstructure/
 models/*.pkl
 models/*.joblib
 models/*.txt

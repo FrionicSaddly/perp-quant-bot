@@ -95,6 +95,7 @@ perp-quant-bot/
 | `pqb basis` | Backtest the delta-neutral basis carry (long spot + short perp) — the one validated edge |
 | `pqb funding-now` | Live funding snapshot: where the carry is right now (positive ⇒ long spot + short perp) |
 | `pqb carry-trade` | Plan the live carry book (dry-run by default); real orders only with `--live --yes` + keys. See `GO_LIVE.md` |
+| `pqb microlog` | Collect perp microstructure (order-book imbalance, CVD, OI, funding) → daily CSV. The short-horizon data bar OHLCV lacks; run on an always-on host to accumulate history |
 
 ## License
 

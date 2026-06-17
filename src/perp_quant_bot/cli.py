@@ -283,5 +283,25 @@ def carry_trade(
         typer.echo(f"  {f}")
 
 
+@app.command()
+def microlog(
+    venue: str = typer.Option("bybit", help="Exchange to collect microstructure from"),
+    interval: float = typer.Option(15.0, help="Seconds between polls"),
+    once: bool = typer.Option(False, help="Single poll then exit (for testing/CI)"),
+    duration: float = typer.Option(0.0, help="Run this many seconds then stop (0 = forever)"),
+) -> None:
+    """Collect perp microstructure (order-book imbalance, CVD, OI, funding) -> daily CSV.
+
+    The short-horizon signals bar data lacks. Run on an always-on host to build
+    history; later this feeds a microstructure-aware model. Ctrl-C stops cleanly.
+    """
+    from .pipeline.microstructure_logger import run_microstructure_logger
+
+    run_microstructure_logger(
+        venue=venue, interval=interval, once=once,
+        duration=duration if duration > 0 else None,
+    )
+
+
 if __name__ == "__main__":
     app()
