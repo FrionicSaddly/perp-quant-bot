@@ -170,6 +170,24 @@ def carry(
     )
 
 
+@app.command(name="funding-now")
+def funding_now(venue: str = typer.Option("bybit", help="Exchange for the live funding snapshot")) -> None:
+    """Live funding snapshot (carry signal: positive => LONG spot + SHORT perp)."""
+    from .strategies.funding_carry import current_funding
+
+    df = current_funding(venue=venue)
+    if df.empty:
+        typer.echo("No funding data.")
+        return
+    typer.echo(f"Live funding @ {venue} (positive = collect by LONG spot + SHORT perp):")
+    for _, r in df.iterrows():
+        flag = "  <- carry" if r["funding_rate"] > 0 else ""
+        typer.echo(
+            f"  {r['symbol']:18} {r['funding_rate'] * 100:+.4f}%/8h "
+            f"(~{r['annualized_pct']:+6.1f}%/yr){flag}"
+        )
+
+
 @app.command()
 def basis(
     source: str = typer.Option("binance_vision", help="binance_vision (deep multi-year) | mexc"),

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 
+import ccxt
 import numpy as np
 import pandas as pd
 
@@ -24,6 +25,35 @@ from ..logging_conf import setup_logging
 from .cross_sectional import DEFAULT_UNIVERSE
 
 logger = setup_logging()
+
+
+def current_funding(venue: str = "bybit", symbols: list[str] | None = None) -> pd.DataFrame:
+    """Live funding snapshot: positive funding => carry = SHORT perp + LONG spot.
+
+    Read-only, no keys. Shows where the carry is right now on a given venue.
+    """
+    symbols = symbols or DEFAULT_UNIVERSE
+    ex = getattr(ccxt, venue)(
+        {"enableRateLimit": True, "timeout": 20000, "options": {"defaultType": "swap"}}
+    )
+    rows = []
+    for s in symbols:
+        try:
+            fr = ex.fetch_funding_rate(s)
+        except Exception:  # noqa: BLE001
+            continue
+        rate = fr.get("fundingRate")
+        if rate is None:
+            continue
+        rate = float(rate)
+        rows.append({
+            "symbol": s,
+            "funding_rate": rate,
+            "annualized_pct": rate * 3 * 365 * 100.0,  # 8h funding -> rough APR
+        })
+    if not rows:
+        return pd.DataFrame(columns=["symbol", "funding_rate", "annualized_pct"])
+    return pd.DataFrame(rows).sort_values("funding_rate", ascending=False).reset_index(drop=True)
 
 
 def funding_carry_backtest(
