@@ -45,3 +45,39 @@ microstructure: order-flow imbalance, liquidations, order-book depth, trade-leve
 CVD — which must be collected forward, like the OpenNews logger), not fancier
 models on bar data. Meanwhile the one **validated** edge remains the
 delta-neutral **basis carry** (`pqb basis`, `GO_LIVE.md`).
+
+## 2026-06: order-flow + positioning on history (does microstructure predict?)
+
+**Goal:** without waiting for live order-book data, test the microstructure
+hypothesis NOW. Binance publishes historically: per-bar **taker-buy volume** in
+klines (order-flow / CVD) and 5-min **metrics** (taker buy/sell ratio, top-trader
+& retail long/short ratios, OI). `scripts/microstructure_history_test.py` adds
+these to the technical features and compares on the same purged-WF OOS folds.
+
+**Results (BTCUSDT, 2025-06 .. 2026-05, purged walk-forward):**
+
+| bars | model | fee | DSR | hit | net ret |
+|---|---|---|---|---|---|
+| 5m | technical-only | taker | 0.00 | 46.6% | -69% |
+| 5m | + order-flow | taker | 0.00 | 50.7% | -66% |
+| 5m | + flow + positioning | taker | 0.00 | 54.0% | -74% |
+| 5m | technical-only | maker | 0.00 | 51.0% | -58% |
+| 5m | + order-flow | maker | 0.00 | 54.2% | -46% |
+| 5m | + flow + positioning | maker | 0.01 | **59.1%** | -47% |
+| 1h | + flow + positioning | taker | 0.00 | 49.8% | -55% |
+
+**Verdict:**
+1. **Microstructure carries real directional signal.** Adding order-flow then
+   positioning lifts hit-rate **monotonically 51 -> 54 -> 59%** at 5m — the
+   strongest predictive content found in this project.
+2. **The signal is short-horizon.** At 1h the lift vanishes (hit ~50%). The edge
+   lives at minutes, not hours.
+3. **It still does not pay** — even at maker fees, DSR ~ 0 and returns are
+   negative. A 59% hit with negative payoff skew + per-trade costs loses. Once
+   more: **hit-rate is not edge.**
+
+**Implication:** a standalone microstructure *direction* bot is unlikely to be
+profitable at these costs. Realistic uses are as a **filter/overlay** or combined
+with the (untestable-historically) **live order-book depth** now being collected.
+Validated earner remains the basis carry. The live collectors keep running so the
+depth angle and an overlay can be evaluated once enough varied-regime data exists.

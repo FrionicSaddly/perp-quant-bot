@@ -36,11 +36,17 @@ MICRO_UNIVERSE = [
     "SOL/USDT:USDT",
     "XRP/USDT:USDT",
     "DOGE/USDT:USDT",
+    "BNB/USDT:USDT",
+    "AVAX/USDT:USDT",
+    "LINK/USDT:USDT",
+    "ADA/USDT:USDT",
+    "LTC/USDT:USDT",
 ]
 
 FIELDS = [
     "ts", "venue", "symbol", "last", "mark", "bid", "ask", "spread_bps",
-    "imb_1", "imb_5", "imb_25", "bid_vol_5", "ask_vol_5", "microprice",
+    "imb_1", "imb_5", "imb_10", "imb_25", "bid_vol_5", "ask_vol_5",
+    "bid_vol_25", "ask_vol_25", "microprice",
     "open_interest", "funding_rate", "buy_vol", "sell_vol", "cvd_delta", "trade_count",
 ]
 
@@ -117,7 +123,9 @@ class MicrostructureCollector:
                 row["imb_1"] = imbalance(bids, asks, 1)[0]
                 imb5, bv5, av5 = imbalance(bids, asks, 5)
                 row["imb_5"], row["bid_vol_5"], row["ask_vol_5"] = imb5, bv5, av5
-                row["imb_25"] = imbalance(bids, asks, 25)[0]
+                row["imb_10"] = imbalance(bids, asks, 10)[0]
+                imb25, bv25, av25 = imbalance(bids, asks, 25)
+                row["imb_25"], row["bid_vol_25"], row["ask_vol_25"] = imb25, bv25, av25
         except Exception as exc:  # noqa: BLE001
             logger.debug("ob {}: {}", symbol, exc)
 
