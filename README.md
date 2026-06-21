@@ -97,6 +97,9 @@ perp-quant-bot/
 | `pqb carry-trade` | Plan the live carry book (dry-run by default); real orders only with `--live --yes` + keys. See `GO_LIVE.md` |
 | `pqb microlog` | Collect perp microstructure (order-book imbalance, CVD, OI, funding) → daily CSV. The short-horizon data bar OHLCV lacks; run on an always-on host to accumulate history |
 
+Methodology guardrails for features, labels, validation, and backtests live in
+[`docs/quant-methodology.md`](docs/quant-methodology.md).
+
 ## License
 
 MIT. Provided for research/education. **Not financial advice.** Use at your own risk.
